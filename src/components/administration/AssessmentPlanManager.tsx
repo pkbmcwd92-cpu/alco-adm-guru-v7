@@ -132,15 +132,6 @@ export const AssessmentPlanManager: React.FC<AssessmentPlanManagerProps> = ({
         if (resolved.purpose) setFormPurpose(resolved.purpose);
         if (resolved.timing) setFormTiming(resolved.timing);
         if (resolved.scopeType) setFormScope(resolved.scopeType);
-        if (resolved.defaultInstruments) {
-          setFormInstruments(
-            resolved.defaultInstruments.map((t) => ({
-              id: `inst-${Date.now()}-${t}`,
-              type: t,
-              label: INSTRUMENT_OPTIONS.find((i) => i.type === t)?.label || t,
-            }))
-          );
-        }
       }
     } else {
       setFormTitle('');
@@ -150,9 +141,9 @@ export const AssessmentPlanManager: React.FC<AssessmentPlanManagerProps> = ({
       setFormCustomTiming('');
       setFormScope('TP');
       setFormCustomScope('');
-      setFormInstruments([]);
     }
 
+    setFormInstruments([]); // STRICTLY EMPTY FOR NEW PLANS
     setFormTpIds([]); // STRICTLY EMPTY ON CREATION
     setFormCriterionIds([]);
     setEditingPlan(newPlan);
@@ -185,15 +176,6 @@ export const AssessmentPlanManager: React.FC<AssessmentPlanManagerProps> = ({
       if (res.purpose) setFormPurpose(res.purpose);
       if (res.timing) setFormTiming(res.timing);
       if (res.scopeType) setFormScope(res.scopeType);
-      if (res.defaultInstruments && formInstruments.length === 0) {
-        setFormInstruments(
-          res.defaultInstruments.map((t) => ({
-            id: `inst-${Date.now()}-${t}`,
-            type: t,
-            label: INSTRUMENT_OPTIONS.find((i) => i.type === t)?.label || t,
-          }))
-        );
-      }
       setAliasNotification(`Terdeteksi: ${res.displayLabel} (${res.purpose} • ${res.timing} • ${res.scopeType})`);
     } else if (res.status === 'AMBIGUOUS') {
       setAliasNotification(`Perhatian: ${res.reason}`);
@@ -330,7 +312,7 @@ export const AssessmentPlanManager: React.FC<AssessmentPlanManagerProps> = ({
             </div>
             <h2 className="text-2xl font-bold text-white">Perencanaan & Perangkat Asesmen</h2>
             <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-              Perancangan instrumen penilaian sesuai Permendikbudristek 12/2024 & Permendikdasmen 13/2025. Terintegrasi langsung dengan Tujuan Pembelajaran (TP) dan KKTP.
+              Perencanaan perangkat asesmen yang terhubung dengan tujuan pembelajaran dan kriteria ketercapaian.
             </p>
           </div>
 

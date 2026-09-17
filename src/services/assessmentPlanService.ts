@@ -11,6 +11,7 @@ import {
   Assessment,
   AcademicSetting,
 } from '../types';
+import { isK13, isMerdeka } from './curriculumRouter';
 
 export interface AssessmentPlanValidationContext {
   academicSetting?: AcademicSetting;
@@ -115,16 +116,7 @@ export function validateAssessmentPlan(
     errors.push('Judul Perangkat Asesmen wajib diisi.');
   }
 
-  // 2. TP / KD References Check
-  const canonicalTpIds = new Set<string>();
-  if (context.tp?.items) {
-    context.tp.items.forEach((t) => canonicalTpIds.add(t.id));
-  }
-  if (context.k13Analysis?.items) {
-    context.k13Analysis.items.forEach((k) => canonicalTpIds.add(k.id));
-  }
-
-  // Mandatory TP check for TP / MULTI_TP scope
+  // 2. Scope constraints
   if (plan.scopeType === 'TP') {
     if (plan.tpIds.length === 0) {
       errors.push('Asesmen dengan cakupan "TP" wajib memilih tepat 1 Tujuan Pembelajaran.');
@@ -137,11 +129,39 @@ export function validateAssessmentPlan(
     }
   }
 
-  // Check for dangling TP references
-  if (canonicalTpIds.size > 0 && plan.tpIds.length > 0) {
-    const invalidTpIds = plan.tpIds.filter((id) => !canonicalTpIds.has(id));
-    if (invalidTpIds.length > 0) {
-      errors.push(`Terdapat ${invalidTpIds.length} referensi Tujuan Pembelajaran (TP/KD) yang tidak valid atau telah dihapus dari alur hulu.`);
+  // Canonical Objective Source Verification
+  const hasSetting = !!context.academicSetting;
+  const currStr = context.academicSetting?.curriculum || '';
+  const currType = context.academicSetting?.curriculumType;
+  const isCurrUnresolved = !hasSetting || (!currStr && !currType);
+
+  if (isCurrUnresolved) {
+    if (plan.scopeType === 'TP' || plan.scopeType === 'MULTI_TP' || plan.tpIds.length > 0) {
+      errors.push('Konteks kurikulum tidak teridentifikasi sehingga referensi asesmen tidak dapat diverifikasi.');
+    }
+  } else if (isMerdeka(context.academicSetting)) {
+    if (plan.scopeType === 'TP' || plan.scopeType === 'MULTI_TP' || plan.tpIds.length > 0) {
+      if (!context.tp?.items || context.tp.items.length === 0) {
+        errors.push('Sumber TP canonical Kurikulum Merdeka tidak tersedia sehingga referensi asesmen tidak dapat diverifikasi.');
+      } else {
+        const validTpIds = new Set(context.tp.items.map((t) => t.id));
+        const invalidTpIds = plan.tpIds.filter((id) => !validTpIds.has(id));
+        if (invalidTpIds.length > 0) {
+          errors.push(`Terdapat ${invalidTpIds.length} referensi Tujuan Pembelajaran (TP) yang tidak valid atau telah dihapus dari alur hulu.`);
+        }
+      }
+    }
+  } else if (isK13(context.academicSetting)) {
+    if (plan.scopeType === 'TP' || plan.scopeType === 'MULTI_TP' || plan.tpIds.length > 0) {
+      if (!context.k13Analysis?.items || context.k13Analysis.items.length === 0) {
+        errors.push('Sumber KD canonical Kurikulum 2013 tidak tersedia sehingga referensi asesmen tidak dapat diverifikasi.');
+      } else {
+        const validKdIds = new Set(context.k13Analysis.items.map((k) => k.id));
+        const invalidKdIds = plan.tpIds.filter((id) => !validKdIds.has(id));
+        if (invalidKdIds.length > 0) {
+          errors.push(`Terdapat ${invalidKdIds.length} referensi Kompetensi Dasar (KD) yang tidak valid atau telah dihapus dari alur hulu.`);
+        }
+      }
     }
   }
 
@@ -268,17 +288,11 @@ export function migrateLegacyAssessment(
     scopeType,
     tpIds,
     criterionIds: [],
-    instruments: [
-      {
-        id: `inst-${legacy.id}`,
-        type: 'WRITTEN_TEST',
-        label: 'Tes Tertulis (Migrasi)',
-      },
-    ],
+    instruments: [], // BLOCKER 1: NO FAKE INSTRUMENT!
     displayLabel: legacy.title,
-    workflowStatus: 'DRAFT',
+    workflowStatus: 'PERLU_DILENGKAPI',
     needsReview: true,
-    reviewReason: 'Hasil migrasi dari perangkat asesmen legacy. Harap periksa dan konfirmasi.',
+    reviewReason: 'Hasil migrasi dari perangkat asesmen legacy. Harap tentukan instrumen dan konfirmasi.',
     revision: 1,
     provenance: {
       generatedBy: 'SYSTEM',
@@ -289,7 +303,7 @@ export function migrateLegacyAssessment(
   };
 
   const validation = validateAssessmentPlan(rawPlan, context);
-  if (validation.valid && tpIds.length > 0) {
+  if (validation.valid) {
     return {
       ...rawPlan,
       workflowStatus: 'SIAP',

@@ -19,7 +19,6 @@ export interface AssessmentAliasResolutionResult {
   purpose?: AssessmentPurpose;
   timing?: AssessmentTiming;
   scopeType?: AssessmentScopeType;
-  defaultInstruments?: AssessmentInstrumentType[];
   reason?: string;
 }
 
@@ -67,7 +66,6 @@ export function resolveAssessmentAlias(
       purpose: 'FORMATIVE',
       timing: 'PRE',
       scopeType: 'TP',
-      defaultInstruments: ['WRITTEN_TEST', 'OBSERVATION'],
     };
   }
 
@@ -79,7 +77,6 @@ export function resolveAssessmentAlias(
       purpose: 'FORMATIVE',
       timing: 'POST',
       scopeType: 'TP',
-      defaultInstruments: ['WRITTEN_TEST'],
     };
   }
 
@@ -91,7 +88,6 @@ export function resolveAssessmentAlias(
       purpose: 'FORMATIVE',
       timing: 'DURING',
       scopeType: 'TP',
-      defaultInstruments: ['OBSERVATION', 'WRITTEN_TEST', 'ASSIGNMENT'],
     };
   }
 
@@ -109,7 +105,6 @@ export function resolveAssessmentAlias(
       purpose: 'SUMMATIVE',
       timing: 'MID_SEMESTER',
       scopeType: 'SEMESTER',
-      defaultInstruments: ['WRITTEN_TEST'],
     };
   }
 
@@ -126,7 +121,6 @@ export function resolveAssessmentAlias(
       purpose: 'SUMMATIVE',
       timing: 'END_SEMESTER',
       scopeType: 'SEMESTER',
-      defaultInstruments: ['WRITTEN_TEST'],
     };
   }
 
@@ -143,7 +137,6 @@ export function resolveAssessmentAlias(
       purpose: 'SUMMATIVE',
       timing: 'END_YEAR',
       scopeType: 'YEAR',
-      defaultInstruments: ['WRITTEN_TEST'],
     };
   }
 
@@ -160,7 +153,6 @@ export function resolveAssessmentAlias(
       purpose: 'SUMMATIVE',
       timing: 'END_LEVEL',
       scopeType: 'LEVEL',
-      defaultInstruments: ['WRITTEN_TEST'],
     };
   }
 
@@ -179,7 +171,6 @@ export function resolveAssessmentAlias(
         purpose: 'SUMMATIVE',
         timing: 'POST',
         scopeType,
-        defaultInstruments: ['WRITTEN_TEST'],
       };
     }
     return {
