@@ -5,6 +5,8 @@ import {
   TPItem,
   ATPData,
   ATPItem,
+  AssessmentCriterion,
+  K13Analysis,
   WorkflowCompletionStatus,
   ActiveContext,
   AcademicSetting,
@@ -596,5 +598,332 @@ export function normalizeATPReferences(atp: ATPData, tp?: TPData): ATPData {
     ...atp,
     tpId: atp.tpId || tp.id,
     items: updatedItems,
+  };
+}
+
+// ==========================================
+// KKTP WORKFLOW & CANONICAL RESOLVER (AUDIT NO. 6)
+// ==========================================
+
+export interface CriterionReferenceResult {
+  status:
+    | 'RESOLVED_REFERENCE'
+    | 'LEGACY_MIGRATED'
+    | 'AMBIGUOUS_REFERENCE'
+    | 'DANGLING_REFERENCE'
+    | 'UNRESOLVED_REFERENCE';
+  canonicalTPItem?: TPItem;
+  tpId?: string;
+  issue?: string;
+}
+
+/**
+ * Resolves canonical TP or KD reference for an AssessmentCriterion.
+ * Strictly adheres to:
+ * - Exact tpId match
+ * - If tpId is specified but not found in canonical TP list -> DANGLING_REFERENCE (no silent positional replacement)
+ * - Unique legacy statement/code matching (only if tpId is empty)
+ * - Ambiguous matches return AMBIGUOUS_REFERENCE (never silently choose first match)
+ */
+export function resolveCriterionTPReference(
+  criterion: AssessmentCriterion,
+  tpItems: TPItem[],
+  k13Analysis?: K13Analysis
+): CriterionReferenceResult {
+  // 1. Kurikulum Merdeka Evaluation
+  if (tpItems && tpItems.length > 0) {
+    // Exact tpId reference
+    if (criterion.tpId && criterion.tpId.trim()) {
+      const trimmedId = criterion.tpId.trim();
+      const matched = tpItems.find((t) => t.id === trimmedId);
+      if (matched) {
+        return {
+          status: 'RESOLVED_REFERENCE',
+          canonicalTPItem: matched,
+          tpId: matched.id,
+        };
+      }
+      return {
+        status: 'DANGLING_REFERENCE',
+        issue: `Kriteria KKTP '${criterion.id}' merujuk pada tpId '${criterion.tpId}' yang tidak ditemukan dalam daftar TP canonical (Dangling Reference).`,
+      };
+    }
+
+    // Legacy migration only if tpId is empty
+    const legacyCode = ((criterion as any).tpCode || '').trim().toLowerCase();
+    if (legacyCode) {
+      const codeCandidates = tpItems.filter(
+        (t) => (t.code || '').trim().toLowerCase() === legacyCode
+      );
+      if (codeCandidates.length === 1) {
+        return {
+          status: 'LEGACY_MIGRATED',
+          canonicalTPItem: codeCandidates[0],
+          tpId: codeCandidates[0].id,
+        };
+      }
+      if (codeCandidates.length > 1) {
+        return {
+          status: 'AMBIGUOUS_REFERENCE',
+          issue: `Kode TP '${(criterion as any).tpCode}' pada kriteria '${criterion.id}' cocok dengan lebih dari 1 butir TP canonical (${codeCandidates.length} kecocokan).`,
+        };
+      }
+    }
+
+    const legacyStmt = ((criterion as any).tpStatement || '').trim().toLowerCase();
+    if (legacyStmt) {
+      const stmtCandidates = tpItems.filter(
+        (t) => (t.statement || t.description || '').trim().toLowerCase() === legacyStmt
+      );
+      if (stmtCandidates.length === 1) {
+        return {
+          status: 'LEGACY_MIGRATED',
+          canonicalTPItem: stmtCandidates[0],
+          tpId: stmtCandidates[0].id,
+        };
+      }
+      if (stmtCandidates.length > 1) {
+        return {
+          status: 'AMBIGUOUS_REFERENCE',
+          issue: `Rumusan TP pada kriteria '${criterion.id}' cocok dengan lebih dari 1 butir TP canonical (${stmtCandidates.length} kecocokan).`,
+        };
+      }
+    }
+
+    const rawDesc = (criterion.description || '').trim();
+    const cleanDesc = rawDesc.replace(/^Kriteria Ketercapaian:\s*/i, '').trim().toLowerCase();
+
+    if (cleanDesc) {
+      const statementCandidates = tpItems.filter(
+        (t) => (t.statement || t.description || '').trim().toLowerCase() === cleanDesc
+      );
+      if (statementCandidates.length === 1) {
+        return {
+          status: 'LEGACY_MIGRATED',
+          canonicalTPItem: statementCandidates[0],
+          tpId: statementCandidates[0].id,
+        };
+      }
+      if (statementCandidates.length > 1) {
+        return {
+          status: 'AMBIGUOUS_REFERENCE',
+          issue: `Rumusan target pada kriteria '${criterion.id}' cocok dengan lebih dari 1 butir TP canonical (${statementCandidates.length} kecocokan).`,
+        };
+      }
+    }
+
+    return {
+      status: 'UNRESOLVED_REFERENCE',
+      issue: `Kriteria '${criterion.id}' belum terhubung dengan Tujuan Pembelajaran (TP) canonical manapun.`,
+    };
+  }
+
+  // 2. Kurikulum 2013 KD Evaluation
+  if (k13Analysis?.items && k13Analysis.items.length > 0) {
+    if (criterion.tpId && criterion.tpId.trim()) {
+      const trimmedId = criterion.tpId.trim();
+      const matchedKD = k13Analysis.items.find((k) => k.id === trimmedId);
+      if (matchedKD) {
+        return {
+          status: 'RESOLVED_REFERENCE',
+          tpId: matchedKD.id,
+        };
+      }
+      return {
+        status: 'DANGLING_REFERENCE',
+        issue: `Kriteria KD '${criterion.id}' merujuk pada KD '${criterion.tpId}' yang tidak ditemukan dalam daftar KD Kurikulum 2013.`,
+      };
+    }
+    return {
+      status: 'UNRESOLVED_REFERENCE',
+      issue: `Kriteria '${criterion.id}' belum memiliki referensi KD canonical.`,
+    };
+  }
+
+  return {
+    status: 'UNRESOLVED_REFERENCE',
+    issue: 'Daftar TP/KD rujukan belum tersedia.',
+  };
+}
+
+/**
+ * Validates a single AssessmentCriterion against canonical TP and workflow rules.
+ */
+export function validateKKTPCriterion(
+  criterion: AssessmentCriterion,
+  tpItems: TPItem[],
+  k13Analysis?: K13Analysis,
+  tpUpdatedAt?: string
+): {
+  isValid: boolean;
+  status: WorkflowCompletionStatus;
+  issues: string[];
+  referenceResult: CriterionReferenceResult;
+} {
+  const issues: string[] = [];
+  const ref = resolveCriterionTPReference(criterion, tpItems, k13Analysis);
+
+  if (ref.status === 'DANGLING_REFERENCE') {
+    issues.push(ref.issue || 'Referensi TP rujukan tidak ditemukan (Dangling Reference).');
+  } else if (ref.status === 'AMBIGUOUS_REFERENCE') {
+    issues.push(ref.issue || 'Referensi target TP bersifat ambigu (lebih dari 1 butir cocok).');
+  } else if (ref.status === 'UNRESOLVED_REFERENCE') {
+    issues.push(ref.issue || 'Kriteria belum terhubung ke TP canonical.');
+  }
+
+  // Validate approach
+  const validApproaches = ['rubrik', 'deskripsi', 'skala_interval', 'legacy_kkm'];
+  if (!criterion.approach || !validApproaches.includes(criterion.approach)) {
+    issues.push(`Pendekatan kriteria '${criterion.approach}' tidak valid.`);
+  }
+
+  // Content validation
+  if (criterion.approach === 'rubrik') {
+    if (!criterion.levels || criterion.levels.length === 0) {
+      issues.push('Kriteria pendekatan rubrik belum memiliki kategori level performa.');
+    } else {
+      const emptyDesc = criterion.levels.some((lvl) => !lvl.description || !lvl.description.trim());
+      if (emptyDesc) {
+        issues.push('Terdapat deskripsi kategori rubrik yang masih kosong.');
+      }
+    }
+  } else if (criterion.approach === 'deskripsi') {
+    if (!criterion.indicators || criterion.indicators.length === 0) {
+      issues.push('Daftar indikator kriteria ketercapaian belum diisi.');
+    } else {
+      const emptyInd = criterion.indicators.some((ind) => !ind || !ind.trim());
+      if (emptyInd) {
+        issues.push('Terdapat butir indikator kriteria yang masih kosong.');
+      }
+    }
+  } else if (criterion.approach === 'skala_interval') {
+    if (!criterion.levels || criterion.levels.length === 0) {
+      issues.push('Skala interval nilai belum ditentukan oleh guru.');
+    } else {
+      const emptyInterval = criterion.levels.some(
+        (lvl) => (!lvl.scoreRange && !lvl.label) || (!lvl.description && !lvl.label)
+      );
+      if (emptyInterval) {
+        issues.push('Terdapat baris skala interval yang belum lengkap.');
+      }
+    }
+  } else if (criterion.approach === 'legacy_kkm') {
+    if (criterion.passingThreshold === undefined || criterion.passingThreshold === null || isNaN(criterion.passingThreshold)) {
+      issues.push('Nilai KKM belum dihitung atau ditentukan.');
+    }
+  }
+
+  // Upstream dependency staleness check
+  if (tpUpdatedAt && criterion.basedOnTpUpdatedAt && criterion.basedOnTpUpdatedAt !== tpUpdatedAt) {
+    issues.push('Tujuan Pembelajaran (TP) acuan telah diperbarui. Kriteria ketercapaian perlu ditinjau ulang.');
+  }
+
+  const isValid = issues.length === 0;
+  let status: WorkflowCompletionStatus = 'DRAFT';
+  if (!isValid || criterion.needsReview) {
+    status = 'PERLU_DILENGKAPI';
+  } else if (criterion.workflowStatus === 'SIAP') {
+    status = 'SIAP';
+  } else {
+    status = 'DRAFT';
+  }
+
+  return {
+    isValid,
+    status,
+    issues,
+    referenceResult: ref,
+  };
+}
+
+/**
+ * Validates the full collection of KKTP criteria for an academic setting.
+ */
+export function validateKKTPData(
+  criteria: AssessmentCriterion[],
+  tp?: TPData,
+  academicSetting?: AcademicSetting,
+  k13Analysis?: K13Analysis
+): {
+  status: WorkflowCompletionStatus;
+  isSiap: boolean;
+  issues: string[];
+  criteriaResults: Array<{
+    criterionId: string;
+    tpId: string;
+    isValid: boolean;
+    status: WorkflowCompletionStatus;
+    issues: string[];
+  }>;
+} {
+  const issues: string[] = [];
+  const criteriaResults: Array<{
+    criterionId: string;
+    tpId: string;
+    isValid: boolean;
+    status: WorkflowCompletionStatus;
+    issues: string[];
+  }> = [];
+
+  const isK13 = academicSetting?.curriculum === 'Kurikulum 2013';
+
+  if (!isK13) {
+    if (!tp || !tp.items || tp.items.length === 0) {
+      return {
+        status: 'BELUM_DIMULAI',
+        isSiap: false,
+        issues: ['Daftar Tujuan Pembelajaran (TP) acuan belum tersedia.'],
+        criteriaResults: [],
+      };
+    }
+  }
+
+  if (!criteria || criteria.length === 0) {
+    return {
+      status: 'BELUM_DIMULAI',
+      isSiap: false,
+      issues: ['Kriteria Ketercapaian Tujuan Pembelajaran (KKTP) belum dirumuskan.'],
+      criteriaResults: [],
+    };
+  }
+
+  const tpItems = tp?.items || [];
+  let allValid = true;
+
+  criteria.forEach((crit) => {
+    const res = validateKKTPCriterion(crit, tpItems, k13Analysis, tp?.updatedAt);
+    criteriaResults.push({
+      criterionId: crit.id,
+      tpId: crit.tpId,
+      isValid: res.isValid,
+      status: res.status,
+      issues: res.issues,
+    });
+    if (!res.isValid) {
+      allValid = false;
+      issues.push(...res.issues);
+    }
+  });
+
+  // Check TP coverage for Merdeka
+  if (!isK13 && tpItems.length > 0) {
+    const coveredTpIds = new Set(criteria.map((c) => c.tpId));
+    const uncovered = tpItems.filter((t) => !coveredTpIds.has(t.id));
+    if (uncovered.length > 0) {
+      issues.push(`Terdapat ${uncovered.length} Tujuan Pembelajaran yang belum memiliki kriteria ketercapaian.`);
+      allValid = false;
+    }
+  }
+
+  const allSiap =
+    allValid &&
+    criteria.length > 0 &&
+    criteria.every((c) => c.workflowStatus === 'SIAP' && !c.needsReview);
+
+  return {
+    status: allSiap ? 'SIAP' : allValid ? 'DRAFT' : 'PERLU_DILENGKAPI',
+    isSiap: allSiap,
+    issues,
+    criteriaResults,
   };
 }

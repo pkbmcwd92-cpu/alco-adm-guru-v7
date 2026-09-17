@@ -132,8 +132,16 @@ export async function generatePenetapanKKM(context: DocumentGenerationContext): 
   // Header
   docChildren.push(...createDocumentHeader('PENETAPAN KRITERIA KETUNTASAN MINIMAL (KKM)', 'KURIKULUM 2013'));
 
+  if (!k13KKM || k13KKM.kkmTotal === undefined || k13KKM.kkmTotal === null) {
+    throw new Error('Data KKM Kurikulum 2013 belum ditetapkan. Silakan lengkapi perhitungan KKM terlebih dahulu.');
+  }
+  const items = k13KKM.items || [];
+  if (items.length === 0) {
+    throw new Error('Data butir KKM Kurikulum 2013 belum tersedia. Silakan lengkapi perhitungan KKM per KD terlebih dahulu.');
+  }
+  const kkmVal = k13KKM.kkmTotal;
+
   // Metadata Table
-  const kkmVal = k13KKM?.kkmTotal || 75;
   docChildren.push(
     createIdentityMetadataTable(school, profile, academicSetting, [
       ['KKM Satuan Pendidikan / Mapel', `: ${kkmVal} (Tuntas ≥ ${kkmVal})`],
@@ -143,7 +151,6 @@ export async function generatePenetapanKKM(context: DocumentGenerationContext): 
   docChildren.push(new Paragraph({ spacing: { after: 180 } }));
 
   // Table
-  const items = k13KKM?.items || [];
   const rows: TableRow[] = [
     new TableRow({
       children: [
@@ -157,35 +164,20 @@ export async function generatePenetapanKKM(context: DocumentGenerationContext): 
     }),
   ];
 
-  if (items.length === 0) {
+  items.forEach((item, index) => {
     rows.push(
       new TableRow({
         children: [
-          createTableDataCell('1', 6, AlignmentType.CENTER),
-          createTableDataCell('3.1 Memahami variasi dan kombinasi gerak dasar lokomotor.\n• Indikator: Menjelaskan gerakan lari dan lompat secara terkoordinasi.', 40),
-          createTableDataCell('75', 13, AlignmentType.CENTER),
-          createTableDataCell('78', 13, AlignmentType.CENTER),
-          createTableDataCell('74', 13, AlignmentType.CENTER),
-          createTableDataCell('76', 15, AlignmentType.CENTER),
+          createTableDataCell((index + 1).toString(), 6, AlignmentType.CENTER),
+          createTableDataCell(`${item.kd}\n• Indikator: ${item.indikator}`, 40),
+          createTableDataCell(item.kompleksitas.toString(), 13, AlignmentType.CENTER),
+          createTableDataCell(item.dayaDukung.toString(), 13, AlignmentType.CENTER),
+          createTableDataCell(item.intake.toString(), 13, AlignmentType.CENTER),
+          createTableDataCell(item.kkmIndikator.toString(), 15, AlignmentType.CENTER),
         ],
       })
     );
-  } else {
-    items.forEach((item, index) => {
-      rows.push(
-        new TableRow({
-          children: [
-            createTableDataCell((index + 1).toString(), 6, AlignmentType.CENTER),
-            createTableDataCell(`${item.kd}\n• Indikator: ${item.indikator}`, 40),
-            createTableDataCell(item.kompleksitas.toString(), 13, AlignmentType.CENTER),
-            createTableDataCell(item.dayaDukung.toString(), 13, AlignmentType.CENTER),
-            createTableDataCell(item.intake.toString(), 13, AlignmentType.CENTER),
-            createTableDataCell(item.kkmIndikator.toString(), 15, AlignmentType.CENTER),
-          ],
-        })
-      );
-    });
-  }
+  });
 
   // Footer row
   rows.push(

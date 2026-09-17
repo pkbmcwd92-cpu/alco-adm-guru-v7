@@ -25,6 +25,7 @@ import { findSubjectByNameOrAlias, findSubjectByCode } from '../data/curriculum/
 import { resolveCurriculumContext, resolveSubjectInput } from '../data/curriculum/resolver';
 import { ResolvedCurriculumContext } from '../data/curriculum/types';
 import { getPhaseFromGrade } from '../data/curriculumDefaults';
+import { validateKKTPData, resolveCriterionTPReference } from './cpWorkflowService';
 
 export type WorkflowStatus = 'BLOCKED' | 'READY' | 'IN_PROGRESS' | 'COMPLETE' | 'STALE';
 
@@ -534,22 +535,32 @@ export function validateWorkflowDependencies(
     let isKKTPStale = false;
 
     criteria.forEach((crit) => {
-      if (!crit.tpId || !validTpIds.has(crit.tpId)) {
+      const ref = resolveCriterionTPReference(crit, tp?.items || [], k13Analysis);
+      if (ref.status === 'DANGLING_REFERENCE' || ref.status === 'UNRESOLVED_REFERENCE') {
         hasOrphanCriterion = true;
         issues.push({
           severity: 'ERROR',
           module: 'KKTP',
           code: 'ORPHAN_CRITERIA_TP_ID',
-          message: `Kriteria KKTP '${crit.id}' merujuk ke tpId '${crit.tpId || 'kosong'}' yang tidak ditemukan dalam daftar TP canonical.`,
+          message: ref.issue || `Kriteria KKTP '${crit.id}' merujuk ke tpId '${crit.tpId || 'kosong'}' yang tidak ditemukan dalam daftar TP canonical.`,
+          targetId: crit.id,
+        });
+      } else if (ref.status === 'AMBIGUOUS_REFERENCE') {
+        hasOrphanCriterion = true;
+        issues.push({
+          severity: 'ERROR',
+          module: 'KKTP',
+          code: 'AMBIGUOUS_CRITERIA_REFERENCE',
+          message: ref.issue || `Kriteria KKTP '${crit.id}' memiliki referensi TP yang ambigu.`,
           targetId: crit.id,
         });
       }
 
-      if (isTPDataValid && isUpstreamStale(tp?.updatedAt, crit.basedOnTpUpdatedAt)) {
+      if (isTPDataValid && (crit.needsReview || isUpstreamStale(tp?.updatedAt, crit.basedOnTpUpdatedAt))) {
         isKKTPStale = true;
       }
 
-      if (crit.approach === 'legacy_kkm') {
+      if (crit.approach === 'legacy_kkm' && !isK13Active) {
         issues.push({
           severity: 'WARNING',
           module: 'KKTP',
@@ -569,12 +580,14 @@ export function validateWorkflowDependencies(
       });
     }
 
+    const kktpDataVal = validateKKTPData(criteria, tp, academicSetting, k13Analysis);
     const isKKTPBlocked = !isTPDataValid;
     const isKKTPComplete =
       isTPDataValid &&
       criteria.length > 0 &&
       !hasOrphanCriterion &&
-      criteria.every((c) => (c.indicators && c.indicators.length > 0) || (c.levels && c.levels.length > 0));
+      !isKKTPStale &&
+      kktpDataVal.isSiap;
 
     kktpState = {
       status: isKKTPBlocked
@@ -718,29 +731,27 @@ export function resolveCriterionTarget(
   targetStatement: string;
   isOrphan: boolean;
 } {
-  // Check TP first (Merdeka)
-  if (criterion.tpId) {
-    const matchedTP = tpList.find((t) => t.id === criterion.tpId);
-    if (matchedTP) {
+  const ref = resolveCriterionTPReference(criterion, tpList, k13Analysis);
+
+  if (ref.status === 'RESOLVED_REFERENCE' || ref.status === 'LEGACY_MIGRATED') {
+    if (ref.canonicalTPItem) {
       return {
-        targetId: matchedTP.id,
-        targetCode: matchedTP.code || 'TP',
-        targetStatement: matchedTP.statement,
+        targetId: ref.canonicalTPItem.id,
+        targetCode: ref.canonicalTPItem.code || '',
+        targetStatement: ref.canonicalTPItem.statement,
         isOrphan: false,
       };
     }
-  }
-
-  // Check K13 KD
-  if (criterion.tpId && k13Analysis?.items) {
-    const matchedKD = k13Analysis.items.find((k) => k.id === criterion.tpId);
-    if (matchedKD) {
-      return {
-        targetId: matchedKD.id,
-        targetCode: 'KD',
-        targetStatement: matchedKD.kd,
-        isOrphan: false,
-      };
+    if (k13Analysis?.items && ref.tpId) {
+      const matchedKD = k13Analysis.items.find((k) => k.id === ref.tpId);
+      if (matchedKD) {
+        return {
+          targetId: matchedKD.id,
+          targetCode: 'KD',
+          targetStatement: matchedKD.kd,
+          isOrphan: false,
+        };
+      }
     }
   }
 

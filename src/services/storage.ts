@@ -1619,6 +1619,21 @@ export function saveTP(tp: TPData): void {
     };
   }
 
+  // Cascading invalidation: Invalidate KKTP criteria if TP updated (Audit No. 6)
+  if (current.assessmentCriteria && current.assessmentCriteria.length > 0) {
+    current.assessmentCriteria = current.assessmentCriteria.map((c) => {
+      if (c.academicSettingId === tp.academicSettingId) {
+        return {
+          ...c,
+          needsReview: true,
+          reviewReason: 'Tujuan Pembelajaran (TP) acuan telah diperbarui. Kriteria ketercapaian perlu ditinjau ulang.',
+          workflowStatus: 'PERLU_DILENGKAPI',
+        };
+      }
+      return c;
+    });
+  }
+
   saveAppStorage(current);
 }
 

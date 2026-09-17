@@ -476,10 +476,10 @@ export type KKTPApproach = 'deskripsi' | 'rubrik' | 'skala_interval' | 'legacy_k
 export type AssessmentCriterionMode = 'DESCRIPTION' | 'RUBRIC' | 'INTERVAL' | 'LEGACY_KKM';
 
 export interface KKTPLevel {
-  level: string; // "Perlu Bimbingan", "Cukup", "Baik", "Sangat Baik"
+  level: string; // e.g. "Perlu Bimbingan", "Cukup", "Baik", "Sangat Baik"
   label: string;
   description: string;
-  scoreRange?: string; // "0 - 65", "66 - 75", "76 - 85", "86 - 100"
+  scoreRange?: string;
 }
 
 export interface AssessmentCriterion {
@@ -493,11 +493,15 @@ export interface AssessmentCriterion {
   method?: 'DESCRIPTION' | 'RUBRIC' | 'INTERVAL' | 'LEGACY_KKM';
   indicators: string[];
   levels: KKTPLevel[];
-  passingThreshold?: number | null; // Nilai KKM/Interval minimum tercapai jika dipilih
+  passingThreshold?: number | null; // Nilai KKM minimum jika pendekatan legacy_kkm, null jika non-legacy
   notes?: string;
   sourceTpRevision?: number;
   basedOnTpUpdatedAt?: string;
   provenance?: DataProvenance;
+  workflowStatus?: 'DRAFT' | 'PERLU_DILENGKAPI' | 'SIAP';
+  generatedBy?: 'AI' | 'AI_EDITED_BY_TEACHER' | 'TEACHER';
+  needsReview?: boolean;
+  reviewReason?: string;
   updatedAt: string;
 }
 

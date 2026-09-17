@@ -13,7 +13,8 @@
     "test:snapshot": "tsx scripts/testSnapshotRegression.ts",
     "test:curriculum": "tsx scripts/testCurriculumMaster.ts",
     "test:school": "tsx scripts/testSchoolArchitecture.ts",
-    "test:workflow": "tsx scripts/testWorkflowDependencyRegression.ts"
+    "test:workflow": "tsx scripts/testWorkflowDependencyRegression.ts",
+    "test:kktp": "tsx scripts/testKKTPRegression.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -90,19 +90,7 @@ export async function generateKKTP(context: DocumentGenerationContext): Promise<
       );
     }
   } else if (tpList.length === 0) {
-    rows.push(
-      new TableRow({
-        children: [
-          createTableDataCell('1', 6, AlignmentType.CENTER),
-          createTableDataCell('TP.1', 12, AlignmentType.CENTER),
-          createTableDataCell('Tujuan Pembelajaran Semester Aktif', 32),
-          createTableDataCell(
-            '• Siswa mampu memahami konsep dasar dan menerapkan prosedur secara mandiri.\n• Kriteria: Minimal mencapai interval 75 (Kategori Baik).',
-            50
-          ),
-        ],
-      })
-    );
+    throw new Error('Data Tujuan Pembelajaran (TP) belum tersedia. Silakan susun TP terlebih dahulu sebelum mengekspor KKTP.');
   } else {
     tpList.forEach((item, index) => {
       const matched = criteriaList.find((c) => c.tpId === item.id);
@@ -110,22 +98,19 @@ export async function generateKKTP(context: DocumentGenerationContext): Promise<
 
       if (matched && matched.levels && matched.levels.length > 0) {
         criteriaText = matched.levels
-          .map((lvl) => `• [${lvl.label} (${lvl.scoreRange || lvl.level})]: ${lvl.description}`)
+          .map((lvl) => `• [${lvl.label}${lvl.scoreRange ? ` (${lvl.scoreRange})` : ''}]: ${lvl.description}`)
           .join('\n');
       } else if (matched && matched.indicators && matched.indicators.length > 0) {
         criteriaText = matched.indicators.map((ind, i) => `${i + 1}. ${ind}`).join('\n');
       } else {
-        criteriaText =
-          `1. Mampu mengidentifikasi dan mendeskripsikan ruang lingkup kompetensi.\n` +
-          `2. Mampu mempraktikkan keterampilan inti secara runtut dan tepat.\n` +
-          `3. Batas Ketuntasan: Interval nilai ≥ 75 (Tercapai).`;
+        criteriaText = matched?.description || '-';
       }
 
       rows.push(
         new TableRow({
           children: [
             createTableDataCell((index + 1).toString(), 6, AlignmentType.CENTER),
-            createTableDataCell(item.code || `TP.${index + 1}`, 12, AlignmentType.CENTER),
+            createTableDataCell(item.code || '-', 12, AlignmentType.CENTER),
             createTableDataCell(`${item.statement || '-'}\n(Materi: ${item.contentScope || '-'})`, 32),
             createTableDataCell(criteriaText, 50),
           ],

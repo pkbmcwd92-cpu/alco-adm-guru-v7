@@ -1,6 +1,6 @@
 {
   "name": "Remix alco-adm-v7",
-  "description": "Imported from GitHub: pkbmcwd92-cpu/alco-adm-v6.1",
+  "description": "Aplikasi Administrasi Guru Kurikulum Merdeka & K13 dengan validasi ketat alur dokumen CP, TP, ATP, dan KKTP.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
