@@ -111,44 +111,35 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
 
   // Create new manual empty plan
   const handleCreateNewManual = () => {
-    const defaultTpIds = tp?.items && tp.items.length > 0 ? [tp.items[0].id] : [];
-    const defaultAtpIds = atp?.items && atp.items.length > 0 ? [atp.items[0].id] : [];
-
     const newPlan = createEmptyLearningPlan({
       academicSetting,
       curriculumType: academicSetting.curriculum?.includes('2013') || academicSetting.curriculum?.includes('K13') ? 'K13' : 'KURIKULUM_MERDEKA',
-      tpIds: defaultTpIds,
-      atpItemIds: defaultAtpIds,
+      tpIds: [],
+      atpItemIds: [],
       context: { tp, atp },
     });
 
     onSavePlan(newPlan);
     setSelectedPlanId(newPlan.id);
     setActiveTab('editor');
-    showNotification('success', 'Rancangan Pembelajaran baru dibuat (Status: DRAFT).');
+    showNotification('success', 'Rancangan Pembelajaran baru dibuat (Status: DRAFT). Silakan pilih TP/ATP.');
   };
 
   // Create AI Assisted Draft
   const handleCreateAIDraft = () => {
-    const defaultTpIds = tp?.items && tp.items.length > 0 ? tp.items.map((t) => t.id) : [];
-    const defaultAtpIds = atp?.items && atp.items.length > 0 ? atp.items.map((a) => a.id) : [];
-
     const draftPlan = createAIDraftLearningPlan({
       academicSetting,
       curriculumType: academicSetting.curriculum?.includes('2013') || academicSetting.curriculum?.includes('K13') ? 'K13' : 'KURIKULUM_MERDEKA',
-      tpIds: defaultTpIds,
-      atpItemIds: defaultAtpIds,
-      aiDraft: {
-        learningModel: 'Problem Based Learning (PBL) & Diskusi Kontekstual',
-        targetStudents: 'Peserta didik reguler dengan diferensiasi proses bimbingan terarah',
-      },
+      tpIds: [],
+      atpItemIds: [],
+      aiDraft: {},
       context: { tp, atp },
     });
 
     onSavePlan(draftPlan);
     setSelectedPlanId(draftPlan.id);
     setActiveTab('editor');
-    showNotification('info', 'Draf AI berhasil dibuat dengan status DRAFT. Silakan tinjau dan lengkapi sebelum konfirmasi.');
+    showNotification('info', 'Draf AI berhasil dibuat dengan status DRAFT. Silakan pilih TP dan lengkapi komponen modul.');
   };
 
   // Update Plan Field
@@ -187,6 +178,14 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
   // Export handlers
   const handleExportDocx = async () => {
     if (!activePlan) return;
+    if (activePlan.status !== 'SIAP') {
+      showNotification('error', `Gagal ekspor: Rancangan Pembelajaran masih berstatus '${activePlan.status}'. Harus diverifikasi dan dikonfirmasi SIAP terlebih dahulu.`);
+      return;
+    }
+    if (validationResult && !validationResult.isValid) {
+      showNotification('error', `Gagal ekspor: Data prasyarat belum valid: ${validationResult.errors.join('; ')}`);
+      return;
+    }
     setIsExporting('docx');
     try {
       const docContext: DocumentGenerationContext = {
@@ -214,6 +213,14 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
 
   const handleExportPdf = async () => {
     if (!activePlan) return;
+    if (activePlan.status !== 'SIAP') {
+      showNotification('error', `Gagal ekspor: Rancangan Pembelajaran masih berstatus '${activePlan.status}'. Harus diverifikasi dan dikonfirmasi SIAP terlebih dahulu.`);
+      return;
+    }
+    if (validationResult && !validationResult.isValid) {
+      showNotification('error', `Gagal ekspor: Data prasyarat belum valid: ${validationResult.errors.join('; ')}`);
+      return;
+    }
     setIsExporting('pdf');
     try {
       const docContext: DocumentGenerationContext = {
@@ -632,7 +639,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                           onChange={(e) => {
                             const lines = e.target.value.split('\n').filter((l) => l.trim().length > 0);
                             handleUpdateActivePlan({
-                              resources: lines.map((l) => ({ type: 'other', title: l.trim() })),
+                              resources: lines.map((l, idx) => ({ id: `res-${Date.now()}-${idx + 1}`, type: 'other', title: l.trim() })),
                             });
                           }}
                           placeholder="Tuliskan daftar sarana/alat/sumber per baris (contoh: Buku Guru, LCD Proyektor, LKPD)..."
@@ -740,7 +747,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                               handleUpdateActivePlan({
                                 learningSteps: {
                                   ...activePlan.learningSteps,
-                                  opening: [...curr, { id: `open-${Date.now()}`, phase: 'opening', description: '', durationMinutes: 10 }],
+                                  opening: [...curr, { id: `open-${Date.now()}`, phase: 'opening', description: '', durationMinutes: undefined }],
                                   core: activePlan.learningSteps?.core || [],
                                   closing: activePlan.learningSteps?.closing || [],
                                 },
@@ -772,7 +779,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                               value={step.durationMinutes || ''}
                               onChange={(e) => {
                                 const list = [...(activePlan.learningSteps?.opening || [])];
-                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || undefined };
                                 handleUpdateActivePlan({
                                   learningSteps: { ...activePlan.learningSteps, opening: list, core: activePlan.learningSteps?.core || [], closing: activePlan.learningSteps?.closing || [] },
                                 });
@@ -808,7 +815,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                                 learningSteps: {
                                   ...activePlan.learningSteps,
                                   opening: activePlan.learningSteps?.opening || [],
-                                  core: [...curr, { id: `core-${Date.now()}`, phase: 'core', description: '', durationMinutes: 50 }],
+                                  core: [...curr, { id: `core-${Date.now()}`, phase: 'core', description: '', durationMinutes: undefined }],
                                   closing: activePlan.learningSteps?.closing || [],
                                 },
                               });
@@ -839,7 +846,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                               value={step.durationMinutes || ''}
                               onChange={(e) => {
                                 const list = [...(activePlan.learningSteps?.core || [])];
-                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || undefined };
                                 handleUpdateActivePlan({
                                   learningSteps: { ...activePlan.learningSteps, opening: activePlan.learningSteps?.opening || [], core: list, closing: activePlan.learningSteps?.closing || [] },
                                 });
@@ -876,7 +883,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                                   ...activePlan.learningSteps,
                                   opening: activePlan.learningSteps?.opening || [],
                                   core: activePlan.learningSteps?.core || [],
-                                  closing: [...curr, { id: `close-${Date.now()}`, phase: 'closing', description: '', durationMinutes: 10 }],
+                                  closing: [...curr, { id: `close-${Date.now()}`, phase: 'closing', description: '', durationMinutes: undefined }],
                                 },
                               });
                             }}
@@ -906,7 +913,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                               value={step.durationMinutes || ''}
                               onChange={(e) => {
                                 const list = [...(activePlan.learningSteps?.closing || [])];
-                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], durationMinutes: Number(e.target.value) || undefined };
                                 handleUpdateActivePlan({
                                   learningSteps: { ...activePlan.learningSteps, opening: activePlan.learningSteps?.opening || [], core: activePlan.learningSteps?.core || [], closing: list },
                                 });
@@ -946,7 +953,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                             handleUpdateActivePlan({
                               assessmentPlan: {
                                 ...activePlan.assessmentPlan,
-                                initial: desc ? [{ id: 'asm-init-1', type: 'initial', description: desc }] : [],
+                                initial: desc ? [{ id: 'asm-init-1', type: 'INITIAL', description: desc }] : [],
                                 formative: activePlan.assessmentPlan?.formative || [],
                                 summative: activePlan.assessmentPlan?.summative || [],
                               },
@@ -970,7 +977,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                               assessmentPlan: {
                                 ...activePlan.assessmentPlan,
                                 initial: activePlan.assessmentPlan?.initial || [],
-                                formative: desc ? [{ id: 'asm-form-1', type: 'formative', description: desc }] : [],
+                                formative: desc ? [{ id: 'asm-form-1', type: 'FORMATIVE', description: desc }] : [],
                                 summative: activePlan.assessmentPlan?.summative || [],
                               },
                             });
@@ -994,7 +1001,7 @@ export const LearningPlanManager: React.FC<LearningPlanManagerProps> = ({
                                 ...activePlan.assessmentPlan,
                                 initial: activePlan.assessmentPlan?.initial || [],
                                 formative: activePlan.assessmentPlan?.formative || [],
-                                summative: desc ? [{ id: 'asm-sum-1', type: 'summative', description: desc }] : [],
+                                summative: desc ? [{ id: 'asm-sum-1', type: 'SUMMATIVE', description: desc }] : [],
                               },
                             });
                           }}

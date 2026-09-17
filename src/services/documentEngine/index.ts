@@ -22,6 +22,8 @@ import { generatePdfDocument } from './renderers/pdf/pdfDocGenerators';
 import { PdfDocumentBuilder, buildPdfFromOptions } from './renderers/pdf/pdfRenderer';
 import { PDF_THEME } from './renderers/pdf/pdfTheme';
 
+import { validateLearningPlan } from '../learningPlanService';
+
 export * from './types';
 export * from './snapshot';
 export * from './docxStyles';
@@ -307,7 +309,34 @@ export function validateDocumentRequirements(
         }
         break;
 
-      case 'MODUL_AJAR':
+      case 'MODUL_AJAR': {
+        const plans = context.learningPlans || [];
+        const matchedPlan =
+          plans.find((p) => p.id === context.activeLearningPlanId) ||
+          plans.find((p) => p.academicSettingId === context.academicSetting?.id && p.status === 'SIAP') ||
+          plans.find((p) => p.academicSettingId === context.academicSetting?.id);
+
+        if (!matchedPlan) {
+          missingFields.push('Rancangan Perencanaan Pembelajaran (LearningPlan) belum dibuat. Silakan susun Modul Ajar terlebih dahulu di menu Perencanaan Pembelajaran.');
+        } else {
+          if (matchedPlan.status !== 'SIAP') {
+            missingFields.push(`Rancangan Pembelajaran '${matchedPlan.title || matchedPlan.topic || matchedPlan.id}' masih berstatus '${matchedPlan.status}' (Harus dikonfirmasi SIAP oleh guru).`);
+          }
+          const planVal = validateLearningPlan(matchedPlan, {
+            academicSetting: context.academicSetting,
+            tp: context.tp,
+            atp: context.atp,
+            k13Analysis: context.k13Analysis,
+            timeAllocations: context.timeAllocations,
+            assessmentCriteria: context.assessmentCriteria,
+          });
+          if (!planVal.valid) {
+            missingFields.push(...planVal.errors);
+          }
+        }
+        break;
+      }
+
       case 'ASESMEN':
         if (tpCount === 0) {
           missingFields.push('Tujuan Pembelajaran (TP) belum dirumuskan');

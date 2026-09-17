@@ -15,7 +15,8 @@
     "test:school": "tsx scripts/testSchoolArchitecture.ts",
     "test:workflow": "tsx scripts/testWorkflowDependencyRegression.ts",
     "test:kktp": "tsx scripts/testKKTPRegression.ts",
-    "test:calendar": "tsx scripts/testCalendarJpRegression.ts"
+    "test:calendar": "tsx scripts/testCalendarJpRegression.ts",
+    "test:audit8": "tsx scripts/testAuditNo8LearningPlanRegression.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -30,7 +30,7 @@ import {
 } from '../types';
 import { getCurriculumTypeFromSetting, isK13, isMerdeka } from './curriculumRouter';
 import { validateATPReferences, normalizeATPReferences, validateATPDataWorkflow } from './cpWorkflowService';
-import { migrateLegacyLearningPlan } from './learningPlanService';
+import { migrateLegacyLearningPlan, invalidatePlanIfDependenciesChanged } from './learningPlanService';
 import {
   INITIAL_PROFILES,
   INITIAL_SCHOOL,
@@ -811,7 +811,16 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
   // Retrieve CP Analysis if exists
   const cpAnalysis = (state.cpAnalyses || []).find((a) => a.academicSettingId === academicSetting!.id);
   const principalHistories = (state.principalHistories || []).filter((h) => h.schoolId === school.id);
-  const learningPlans = (state.learningPlans || []).filter((lp) => lp.academicSettingId === academicSetting!.id);
+  const rawLearningPlans = (state.learningPlans || []).filter((lp) => lp.academicSettingId === academicSetting!.id);
+  const learningPlans = rawLearningPlans.map((lp) => {
+    if (lp.status === 'SIAP') {
+      const reval = invalidatePlanIfDependenciesChanged(lp, { academicSetting, tp, atp, k13Analysis });
+      if (reval.isInvalidated) {
+        return reval.plan;
+      }
+    }
+    return lp;
+  });
 
   return {
     profile,

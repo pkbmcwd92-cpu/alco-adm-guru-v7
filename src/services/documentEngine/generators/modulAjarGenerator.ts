@@ -46,17 +46,19 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
       context.learningPlans[0];
   }
 
-  // If no plan exists in context, synthesize an unconfirmed empty draft from available TP data
+  // If no plan exists in context, in blank mode create empty shell for layout, otherwise block export
   if (!plan) {
-    const defaultTpIds = tp?.items ? tp.items.map((t) => t.id) : [];
-    const defaultAtpIds = atp?.items ? atp.items.map((a) => a.id) : [];
-    plan = createEmptyLearningPlan({
-      academicSetting,
-      curriculumType: academicSetting.curriculum?.includes('2013') || academicSetting.curriculum?.includes('K13') ? 'K13' : 'KURIKULUM_MERDEKA',
-      tpIds: defaultTpIds,
-      atpItemIds: defaultAtpIds,
-      context: { tp, atp },
-    });
+    if (context.documentMode === 'blank') {
+      plan = createEmptyLearningPlan({
+        academicSetting,
+        curriculumType: academicSetting.curriculum?.includes('2013') || academicSetting.curriculum?.includes('K13') ? 'K13' : 'KURIKULUM_MERDEKA',
+        tpIds: [],
+        atpItemIds: [],
+        context: { tp, atp },
+      });
+    } else {
+      throw new Error('Rancangan Pembelajaran (LearningPlan) tidak ditemukan. Silakan buat Modul Ajar terlebih dahulu di menu Perencanaan Pembelajaran.');
+    }
   }
 
   // 2. Validate Plan against active context
@@ -68,6 +70,16 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
     timeAllocations: context.timeAllocations,
     assessmentCriteria: context.assessmentCriteria,
   });
+
+  // Strict Final Export Guard
+  if (context.documentMode !== 'blank') {
+    if (plan.status !== 'SIAP') {
+      throw new Error(`Rancangan Pembelajaran (Modul Ajar) belum berstatus 'SIAP' (Status saat ini: '${plan.status}'). Silakan verifikasi dan konfirmasi SIAP terlebih dahulu.`);
+    }
+    if (!validation.valid) {
+      throw new Error(`Rancangan Pembelajaran tidak valid untuk ekspor dokumen final: ${validation.errors.join('; ')}`);
+    }
+  }
 
   const isDraft = plan.status !== 'SIAP';
   const isBlankMode = context.documentMode === 'blank';
@@ -163,10 +175,8 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
       .join('\n');
   }
 
-  // Compile P3 dimensions
-  const explicitP3 = plan.p3Dimensions && plan.p3Dimensions.length > 0
-    ? plan.p3Dimensions
-    : Array.from(new Set(validation.resolvedTPs.map((t) => t.materialScope).filter(Boolean)));
+  // Compile P3 dimensions (strictly from p3Dimensions field, no fallback from materialScope)
+  const explicitP3 = plan.p3Dimensions && plan.p3Dimensions.length > 0 ? plan.p3Dimensions : [];
   const p3Text = explicitP3.length > 0 ? explicitP3.join(', ') : '-';
 
   // I. INFORMASI UMUM
