@@ -262,18 +262,16 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
 
   const handleOpenAdd = () => {
     const nextStep = items.length + 1;
-    const firstTP = tp.items[0];
-    const gradeNum = context.grade.replace(/[^0-9]/g, '') || '4';
     setCurrentItem({
-      id: `atp-item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: `atp-item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       stepNumber: nextStep,
-      tpId: firstTP?.id,
-      tpCode: firstTP?.code || `TP ${gradeNum}.${nextStep}`,
-      tpStatement: firstTP?.statement || '',
-      materialScope: firstTP?.contentScope || '',
+      tpId: '',
+      tpCode: '',
+      tpStatement: '',
+      materialScope: '',
       jp: undefined,
       semester: (context.semester === 1 || context.semester === 2) ? context.semester : undefined,
-      p3Dimensions: firstTP?.p3Dimensions ? [...firstTP.p3Dimensions] : [],
+      p3Dimensions: [],
       assessmentPlan: '',
       glossary: '',
       resources: '',
@@ -288,8 +286,8 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
 
   const handleSaveItemModal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentItem || !currentItem.tpStatement.trim()) {
-      alert('Rumusan Tujuan Pembelajaran wajib diisi.');
+    if (!currentItem || !currentItem.tpId || !currentItem.tpStatement.trim()) {
+      alert('Pilih butir Tujuan Pembelajaran (TP Canonical) terlebih dahulu.');
       return;
     }
 
@@ -696,10 +694,17 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                       setCurrentItem({
                         ...currentItem,
                         tpId: matched.id,
-                        tpCode: matched.code,
+                        tpCode: matched.code || '',
                         tpStatement: matched.statement,
                         materialScope: currentItem.materialScope || matched.contentScope || '',
-                        p3Dimensions: matched.p3Dimensions && matched.p3Dimensions.length > 0 ? matched.p3Dimensions : currentItem.p3Dimensions,
+                        p3Dimensions: matched.p3Dimensions && matched.p3Dimensions.length > 0 ? [...matched.p3Dimensions] : currentItem.p3Dimensions,
+                      });
+                    } else {
+                      setCurrentItem({
+                        ...currentItem,
+                        tpId: '',
+                        tpCode: '',
+                        tpStatement: '',
                       });
                     }
                   }}

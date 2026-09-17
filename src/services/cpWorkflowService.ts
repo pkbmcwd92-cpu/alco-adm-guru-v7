@@ -348,47 +348,66 @@ export function resolveATPItemTPReference(
     }
   }
 
-  // 2. Legacy migration check by exact unique code
-  if (atpItem.tpCode && atpItem.tpCode.trim()) {
-    const trimmedCode = atpItem.tpCode.trim().toLowerCase();
-    const codeMatches = tpItems.filter(
-      (t) => t.code && t.code.trim().toLowerCase() === trimmedCode
-    );
-    if (codeMatches.length === 1) {
+  // 2. Legacy check: Evaluate candidates by code and statement
+  const trimmedCode = atpItem.tpCode ? atpItem.tpCode.trim().toLowerCase() : '';
+  const codeMatches = trimmedCode
+    ? tpItems.filter((t) => t.code && t.code.trim().toLowerCase() === trimmedCode)
+    : [];
+
+  const normStatement = atpItem.tpStatement ? atpItem.tpStatement.trim().toLowerCase() : '';
+  const statementMatches = normStatement
+    ? tpItems.filter((t) => (t.statement || t.description || '').trim().toLowerCase() === normStatement)
+    : [];
+
+  // Check if either candidate set is ambiguous (> 1 match)
+  if (codeMatches.length > 1) {
+    return {
+      status: 'AMBIGUOUS_REFERENCE',
+      issue: `Kode TP "${atpItem.tpCode}" pada langkah ke-${atpItem.stepNumber} cocok dengan lebih dari 1 butir TP (Ambiguous Reference).`,
+    };
+  }
+  if (statementMatches.length > 1) {
+    return {
+      status: 'AMBIGUOUS_REFERENCE',
+      issue: `Kalimat TP "${atpItem.tpStatement}" pada langkah ke-${atpItem.stepNumber} cocok dengan lebih dari 1 butir TP (Ambiguous Reference).`,
+    };
+  }
+
+  // If both code and statement matched exactly one, ensure they agree
+  if (codeMatches.length === 1 && statementMatches.length === 1) {
+    if (codeMatches[0].id === statementMatches[0].id) {
       return {
         status: 'LEGACY_MIGRATED',
         canonicalTPItem: codeMatches[0],
         tpId: codeMatches[0].id,
       };
-    } else if (codeMatches.length > 1) {
+    } else {
       return {
         status: 'AMBIGUOUS_REFERENCE',
-        issue: `Kode TP "${atpItem.tpCode}" pada langkah ke-${atpItem.stepNumber} cocok dengan lebih dari 1 butir TP (Ambiguous Reference).`,
+        issue: `Kode TP "${atpItem.tpCode}" dan Kalimat TP pada langkah ke-${atpItem.stepNumber} merujuk pada dua butir TP yang berbeda (Contradictory / Ambiguous Reference).`,
       };
     }
   }
 
-  // 3. Legacy migration check by exact unique normalized statement
-  if (atpItem.tpStatement && atpItem.tpStatement.trim()) {
-    const normStatement = atpItem.tpStatement.trim().toLowerCase();
-    const statementMatches = tpItems.filter(
-      (t) => (t.statement || t.description || '').trim().toLowerCase() === normStatement
-    );
-    if (statementMatches.length === 1) {
-      return {
-        status: 'LEGACY_MIGRATED',
-        canonicalTPItem: statementMatches[0],
-        tpId: statementMatches[0].id,
-      };
-    } else if (statementMatches.length > 1) {
-      return {
-        status: 'AMBIGUOUS_REFERENCE',
-        issue: `Kalimat TP "${atpItem.tpStatement}" pada langkah ke-${atpItem.stepNumber} cocok dengan lebih dari 1 butir TP (Ambiguous Reference).`,
-      };
-    }
+  // If unique code matched
+  if (codeMatches.length === 1) {
+    return {
+      status: 'LEGACY_MIGRATED',
+      canonicalTPItem: codeMatches[0],
+      tpId: codeMatches[0].id,
+    };
   }
 
-  // 4. Unresolved reference
+  // If unique statement matched
+  if (statementMatches.length === 1) {
+    return {
+      status: 'LEGACY_MIGRATED',
+      canonicalTPItem: statementMatches[0],
+      tpId: statementMatches[0].id,
+    };
+  }
+
+  // 3. Unresolved reference
   return {
     status: 'UNRESOLVED_REFERENCE',
     issue: `Langkah ATP ke-${atpItem.stepNumber} (${atpItem.tpCode || 'Tanpa Kode'}) belum terhubung dengan Tujuan Pembelajaran (TP) manapun.`,
