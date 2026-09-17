@@ -371,7 +371,16 @@ export interface Student {
 // ==========================================
 // MODUL A: PERENCANAAN WAKTU
 // ==========================================
-export type CalendarSourceType = 'REGIONAL_CALENDAR' | 'SCHOOL_CALENDAR' | 'MANUAL';
+export type CalendarSourceType =
+  | 'REGIONAL_EDUCATION_CALENDAR'
+  | 'SCHOOL_ADJUSTMENT'
+  | 'MANUAL'
+  | 'IMPORTED'
+  | 'LEGACY'
+  | 'UNVERIFIED'
+  // Legacy compatibility aliases
+  | 'REGIONAL_CALENDAR'
+  | 'SCHOOL_CALENDAR';
 
 export interface AcademicCalendar {
   id: string;
@@ -380,12 +389,15 @@ export interface AcademicCalendar {
   semester: string;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  schoolDaysPerWeek: number; // 5 atau 6 hari sekolah per minggu
+  schoolDaysPerWeek?: number | null; // 5 atau 6 hari sekolah per minggu (nullable / unresolved)
   sourceType?: CalendarSourceType;
   sourceName?: string;
+  sourceReference?: string;
   sourceUrl?: string;
+  sourceRegion?: string;
+  verifiedAt?: string;
   /** @deprecated Compatibility alias. Prefer setting.subjectWeeklyJP */
-  jpPerWeek?: number;
+  jpPerWeek?: number | null;
   notes?: string;
   updatedAt: string;
 }
@@ -419,6 +431,7 @@ export interface TimeAllocation {
   sourceId?: string;
   tpId?: string;
   atpItemId?: string;
+  semester?: string | number;
   weekNumber?: number;
   startWeek?: number;
   endWeek?: number;

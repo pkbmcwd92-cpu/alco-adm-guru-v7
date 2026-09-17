@@ -74,18 +74,20 @@ export async function generateKalenderAkademik(context: DocumentGenerationContex
   let effectiveWeeksCount = 0;
   let availableJPCount: number | null = null;
 
-  if (calendar?.startDate && calendar?.endDate) {
+  if (calendar?.startDate && calendar?.endDate && (calendar.schoolDaysPerWeek === 5 || calendar.schoolDaysPerWeek === 6)) {
     const eff = calculateEffectiveDays(calendar, daysList);
     effectiveDaysCount = eff.effectiveLearningDays;
     const avail = calculateAvailableJP({
-      subjectWeeklyJP: weeklyJP || 0,
-      effectiveLearningDays: effectiveDaysCount,
+      subjectWeeklyJP: weeklyJP,
+      effectiveLearningDays: eff.status === 'RESOLVED' ? effectiveDaysCount : null,
       schoolDaysPerWeek: calendar.schoolDaysPerWeek,
+      calendarStatus: eff.status,
+      effectiveDayStatus: eff.status,
       semester: calendar.semester,
       academicYear: calendar.academicYear,
     });
     effectiveWeeksCount = avail.effectiveWeeksRounded ?? 0;
-    availableJPCount = weeklyJP !== null ? avail.availableJP : null;
+    availableJPCount = avail.availableJP;
   }
 
   const summaryTable = new Table({
@@ -102,7 +104,7 @@ export async function generateKalenderAkademik(context: DocumentGenerationContex
         children: [
           createTableDataCell('1', 10, AlignmentType.CENTER),
           createTableDataCell('Tahun Ajaran / Semester Aktif', 60),
-          createTableDataCell(`${calendar?.academicYear || '2026/2027'} (Semester ${calendar?.semester || '1'})`, 30, AlignmentType.CENTER),
+          createTableDataCell(`${calendar?.academicYear || academicSetting.academicYear || '-'} (Semester ${calendar?.semester || academicSetting.semester || '-'})`, 30, AlignmentType.CENTER),
         ],
       }),
       new TableRow({

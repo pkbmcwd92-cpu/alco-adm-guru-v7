@@ -59,48 +59,22 @@ export const DEFAULT_SAMPLE_STUDENTS: { name: string; gender: 'L' | 'P'; nisn: s
 ];
 
 export function createDefaultCalendarForSetting(setting: AcademicSetting): { calendar: AcademicCalendar; days: CalendarDay[] } {
-  const isSem1 = setting.semester?.startsWith('1') ?? true;
-  const yearParts = (setting.academicYear || '2026/2027').split('/');
-  const startYear = parseInt(yearParts[0], 10) || 2026;
-  const endYear = parseInt(yearParts[1], 10) || startYear + 1;
-
-  const startDate = isSem1 ? `${startYear}-07-13` : `${endYear}-01-05`;
-  const endDate = isSem1 ? `${startYear}-12-19` : `${endYear}-06-25`;
-
   const calId = `cal-${setting.id}`;
   const calendar: AcademicCalendar = {
     id: calId,
     academicSettingId: setting.id,
-    academicYear: setting.academicYear || '2026/2027',
-    semester: setting.semester || '1 (Ganjil)',
-    startDate,
-    endDate,
-    schoolDaysPerWeek: 5,
-    jpPerWeek: Number(setting.totalHoursPerWeek) || 4,
-    notes: `Kalender Akademik Semester ${setting.semester || '1'} Tahun Ajaran ${setting.academicYear || '2026/2027'}`,
+    academicYear: setting.academicYear || '',
+    semester: setting.semester || '1',
+    startDate: '',
+    endDate: '',
+    schoolDaysPerWeek: null,
+    sourceType: 'UNVERIFIED',
+    jpPerWeek: setting.subjectWeeklyJP ? Number(setting.subjectWeeklyJP) : (setting.totalHoursPerWeek ? Number(setting.totalHoursPerWeek) : null),
+    notes: '',
     updatedAt: new Date().toISOString(),
   };
 
   const days: CalendarDay[] = [];
-  if (isSem1) {
-    days.push(
-      { id: `day-${calId}-mpls`, academicCalendarId: calId, date: `${startYear}-07-13`, status: 'schoolEvent', notes: 'Hari Pertama Masuk Sekolah / MPLS' },
-      { id: `day-${calId}-hutri`, academicCalendarId: calId, date: `${startYear}-08-17`, status: 'holiday', notes: 'Hari Kemerdekaan RI Ke-81' },
-      { id: `day-${calId}-pts`, academicCalendarId: calId, date: `${startYear}-09-21`, status: 'schoolEvent', notes: 'Penilaian Tengah Semester (PTS/STS)' },
-      { id: `day-${calId}-guru`, academicCalendarId: calId, date: `${startYear}-11-25`, status: 'schoolEvent', notes: 'Peringatan Hari Guru Nasional' },
-      { id: `day-${calId}-pas`, academicCalendarId: calId, date: `${startYear}-12-07`, status: 'schoolEvent', notes: 'Penilaian Akhir Semester (PAS/SAS)' },
-      { id: `day-${calId}-rapor`, academicCalendarId: calId, date: `${startYear}-12-19`, status: 'schoolEvent', notes: 'Pembagian Buku Rapor Semester Ganjil' }
-    );
-  } else {
-    days.push(
-      { id: `day-${calId}-masuk2`, academicCalendarId: calId, date: `${endYear}-01-05`, status: 'schoolEvent', notes: 'Hari Pertama Masuk Semester Genap' },
-      { id: `day-${calId}-pts2`, academicCalendarId: calId, date: `${endYear}-03-08`, status: 'schoolEvent', notes: 'Penilaian Tengah Semester Genap' },
-      { id: `day-${calId}-lebaran`, academicCalendarId: calId, date: `${endYear}-04-01`, status: 'holiday', notes: 'Libur Hari Raya Idul Fitri' },
-      { id: `day-${calId}-pat`, academicCalendarId: calId, date: `${endYear}-06-07`, status: 'schoolEvent', notes: 'Penilaian Akhir Tahun (PAT/SAS Genap)' },
-      { id: `day-${calId}-rapor2`, academicCalendarId: calId, date: `${endYear}-06-25`, status: 'schoolEvent', notes: 'Pembagian Buku Rapor & Kenaikan Kelas' }
-    );
-  }
-
   return { calendar, days };
 }
 

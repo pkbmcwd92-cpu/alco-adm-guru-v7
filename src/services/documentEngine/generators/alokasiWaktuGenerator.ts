@@ -63,14 +63,14 @@ export async function generateAlokasiWaktu(context: DocumentGenerationContext): 
   docChildren.push(
     ...createDocumentHeader(
       'RINCIAN DISTRIBUSI ALOKASI WAKTU PEMBELAJARAN',
-      `${academicSetting.curriculum} — TP ${academicSetting.academicYear || '2026/2027'}`
+      `${academicSetting.curriculum} — TP ${academicSetting.academicYear || '-'}`
     )
   );
 
   // Metadata Table
   docChildren.push(
     createIdentityMetadataTable(school, profile, academicSetting, [
-      ['Tahun Ajaran / Semester', `: ${academicSetting.academicYear || '2026/2027'} / ${academicSetting.semester || 'Semester 1'}`],
+      ['Tahun Ajaran / Semester', `: ${academicSetting.academicYear || '-'} / ${academicSetting.semester || 'Semester 1'}`],
       ['Beban JP Intrakurikuler per Minggu', `: ${weeklyJP !== null ? `${weeklyJP} JP / Minggu` : 'Input Manual Diperlukan'}`],
       ['Total Alokasi Pembelajaran Terdata', `: ${totalAllocatedJP} Jam Pelajaran (JP)`],
       ['Dasar Regulasi Struktur', `: ${officialRule.regulation || 'Struktur Kustom Guru'}`],
@@ -109,8 +109,6 @@ export async function generateAlokasiWaktu(context: DocumentGenerationContext): 
     }),
   ];
 
-  let cumulativeWeeks = 0;
-
   if (isK13Curriculum) {
     const k13Items = k13Analysis?.items || [];
     if (k13Items.length === 0) {
@@ -139,12 +137,6 @@ export async function generateAlokasiWaktu(context: DocumentGenerationContext): 
             : `Pekan ${matchingAlloc.startWeek} - ${matchingAlloc.endWeek}`;
         } else if (matchingAlloc?.weekNumber) {
           weekDisplay = `Pekan ${matchingAlloc.weekNumber}`;
-        } else if (itemJP && weeklyJP) {
-          const estimatedWeeks = Math.max(1, Math.ceil(itemJP / weeklyJP));
-          const startW = cumulativeWeeks + 1;
-          const endW = cumulativeWeeks + estimatedWeeks;
-          cumulativeWeeks = endW;
-          weekDisplay = startW === endW ? `Pekan ${startW}` : `Pekan ${startW} - ${endW}`;
         }
 
         rows.push(
@@ -188,12 +180,6 @@ export async function generateAlokasiWaktu(context: DocumentGenerationContext): 
             : `Pekan ${matchingAlloc.startWeek} - ${matchingAlloc.endWeek}`;
         } else if (matchingAlloc?.weekNumber) {
           weekDisplay = `Pekan ${matchingAlloc.weekNumber}`;
-        } else if (itemJP && weeklyJP) {
-          const estimatedWeeks = Math.max(1, Math.ceil(itemJP / weeklyJP));
-          const startW = cumulativeWeeks + 1;
-          const endW = cumulativeWeeks + estimatedWeeks;
-          cumulativeWeeks = endW;
-          weekDisplay = startW === endW ? `Pekan ${startW}` : `Pekan ${startW} - ${endW}`;
         }
 
         rows.push(

@@ -12,7 +12,6 @@ import {
   CalendarCheck,
   ShieldCheck,
   RotateCcw,
-  Sparkles,
   BookOpen,
   Info,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import {
   SchoolData,
   ATPData,
   K13Analysis,
+  CalendarSourceType,
 } from '../../types';
 import { generateKalenderAkademik, generateAlokasiWaktu } from '../../services/documentEngine';
 import {
@@ -32,7 +32,6 @@ import {
   calculateEffectiveDays,
   calculateEffectiveWeeks,
   getSubjectJP,
-  deriveEffectiveJP,
 } from '../../services/jpEngine';
 
 interface TimePlanningManagerProps {
@@ -73,34 +72,46 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     });
   }, [academicSetting]);
 
-  // Calendar form state
-  const [academicYear, setAcademicYear] = useState(
-    calendar?.academicYear || academicSetting.academicYear || '2026/2027'
+  // Calendar form state - strictly no fabricated defaults
+  const [academicYear, setAcademicYear] = useState<string>(
+    calendar?.academicYear || academicSetting.academicYear || ''
   );
   const [semester, setSemester] = useState<'1' | '2'>(
-    calendar?.semester || (academicSetting.semester?.includes('2') ? '2' : '1')
+    calendar?.semester?.includes('2') || academicSetting.semester?.includes('2') ? '2' : '1'
   );
-  const [startDate, setStartDate] = useState(
-    calendar?.startDate || (semester === '1' ? '2026-07-13' : '2027-01-04')
-  );
-  const [endDate, setEndDate] = useState(
-    calendar?.endDate || (semester === '1' ? '2026-12-18' : '2027-06-18')
-  );
-  const [schoolDaysPerWeek, setSchoolDaysPerWeek] = useState<number>(
-    calendar?.schoolDaysPerWeek || 5
+  const [startDate, setStartDate] = useState<string>(calendar?.startDate || '');
+  const [endDate, setEndDate] = useState<string>(calendar?.endDate || '');
+  const [schoolDaysPerWeek, setSchoolDaysPerWeek] = useState<number | null>(
+    calendar?.schoolDaysPerWeek === 5 || calendar?.schoolDaysPerWeek === 6
+      ? calendar.schoolDaysPerWeek
+      : null
   );
 
-  // JP per week: initial value from calendar, setting, or official rule
+  // Provenance state
+  const [sourceType, setSourceType] = useState<CalendarSourceType>(
+    calendar?.sourceType || 'MANUAL'
+  );
+  const [sourceName, setSourceName] = useState<string>(calendar?.sourceName || '');
+  const [sourceRegion, setSourceRegion] = useState<string>(calendar?.sourceRegion || '');
+
+  // JP per week: initial value from calendar, setting, or official rule (no fallback to 4)
   const initialJP =
-    calendar?.jpPerWeek ||
-    academicSetting.subjectWeeklyJP ||
-    academicSetting.totalHoursPerWeek ||
-    officialRule.weeklyJP ||
-    4;
-  const [jpPerWeek, setJpPerWeek] = useState<number>(initialJP);
+    calendar?.jpPerWeek !== undefined && calendar?.jpPerWeek !== null
+      ? calendar.jpPerWeek
+      : academicSetting.subjectWeeklyJP !== undefined && academicSetting.subjectWeeklyJP !== null
+      ? Number(academicSetting.subjectWeeklyJP)
+      : academicSetting.totalHoursPerWeek !== undefined && academicSetting.totalHoursPerWeek !== null
+      ? Number(academicSetting.totalHoursPerWeek)
+      : officialRule.weeklyJP ?? null;
+
+  const [jpPerWeek, setJpPerWeek] = useState<number | null>(initialJP);
 
   // Track if user manually modified JP
-  const isCustomJP = officialRule.isOfficial && officialRule.weeklyJP !== null && jpPerWeek !== officialRule.weeklyJP;
+  const isCustomJP =
+    officialRule.isOfficial &&
+    officialRule.weeklyJP !== null &&
+    jpPerWeek !== null &&
+    jpPerWeek !== officialRule.weeklyJP;
 
   // Calendar days / events
   const [days, setDays] = useState<CalendarDay[]>(calendarDays || []);
@@ -115,6 +126,13 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
 
   // Exact Effective Days & Weeks calculation from JP Engine
   const effectiveResult = useMemo(() => {
+    if (!startDate || !endDate || !schoolDaysPerWeek) {
+      return calculateEffectiveDays({
+        startDate: '',
+        endDate: '',
+        schoolDaysPerWeek: undefined,
+      }, []);
+    }
     return calculateEffectiveDays(
       {
         startDate,
@@ -127,40 +145,84 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     );
   }, [startDate, endDate, schoolDaysPerWeek, semester, academicYear, days]);
 
-  const effectiveWeeks = calculateEffectiveWeeks(effectiveResult.effectiveLearningDays, schoolDaysPerWeek).effectiveWeeksRounded;
+  const effectiveWeeksResult = useMemo(() => {
+    return calculateEffectiveWeeks(effectiveResult.effectiveLearningDays, schoolDaysPerWeek);
+  }, [effectiveResult.effectiveLearningDays, schoolDaysPerWeek]);
+
+  const effectiveWeeks =
+    effectiveWeeksResult.status === 'RESOLVED' ? effectiveWeeksResult.effectiveWeeksRounded : null;
 
   // Compute available JP using the official formula: JP/minggu * minggu efektif
   const availableJPResult = useMemo(() => {
     return calculateAvailableJP({
       subjectWeeklyJP: jpPerWeek,
-      effectiveLearningDays: effectiveResult.effectiveLearningDays,
+      effectiveLearningDays: effectiveResult.status === 'RESOLVED' ? effectiveResult.effectiveLearningDays : null,
       schoolDaysPerWeek,
+      calendarStatus: effectiveResult.status,
+      effectiveDayStatus: effectiveResult.status,
       semester,
       academicYear,
       level: academicSetting.level,
       grade: academicSetting.grade,
       subject: academicSetting.subject,
-      officialAnnualJP: officialRule.annualJP,
+      officialAnnualJP: officialRule.intrakurikulerAnnualJP ?? officialRule.annualJP,
     });
-  }, [jpPerWeek, effectiveResult.effectiveLearningDays, schoolDaysPerWeek, semester, academicYear, academicSetting, officialRule]);
+  }, [
+    jpPerWeek,
+    effectiveResult,
+    schoolDaysPerWeek,
+    semester,
+    academicYear,
+    academicSetting,
+    officialRule,
+  ]);
 
-  const totalAvailableJP = availableJPResult.availableJP;
+  const totalAvailableJP =
+    availableJPResult.status === 'RESOLVED' ? availableJPResult.availableJP : null;
 
-  // Planned JP calculation
+  // Planned JP calculation from concrete item allocations or explicit item JP
   const totalPlannedJP = useMemo(() => {
     if (isK13Curriculum) {
-      return (k13Analysis?.items || []).reduce((acc, _) => acc + jpPerWeek, 0);
+      return (k13Analysis?.items || []).reduce((acc, item) => {
+        const match = allocations.find(
+          (a) =>
+            (a.sourceType === 'KD' && a.sourceId === item.id) ||
+            a.sourceId === item.id ||
+            a.tpId === item.id
+        );
+        const jp = match?.allocatedJP ?? match?.jp ?? (item.alokasiJp ? Number(item.alokasiJp) : 0);
+        return acc + jp;
+      }, 0);
     }
-    return (atp?.items || []).reduce((acc, curr) => acc + (Number(curr.jp) || jpPerWeek), 0);
-  }, [isK13Curriculum, k13Analysis, atp, jpPerWeek]);
+    return (atp?.items || []).reduce((acc, curr) => {
+      const match = allocations.find(
+        (a) =>
+          (a.sourceType === 'ATP_ITEM' && a.sourceId === curr.id) ||
+          a.atpItemId === curr.id ||
+          a.sourceId === curr.id
+      );
+      const itemJp =
+        curr.jp !== undefined && curr.jp !== null
+          ? Number(curr.jp)
+          : match?.allocatedJP ?? match?.jp ?? 0;
+      return acc + (itemJp || 0);
+    }, 0);
+  }, [isK13Curriculum, k13Analysis, atp, allocations]);
 
-  const jpDifference = totalAvailableJP - totalPlannedJP;
+  const jpDifference =
+    totalAvailableJP !== null && totalPlannedJP > 0 ? totalAvailableJP - totalPlannedJP : null;
+
+  const isCalendarConfigComplete =
+    Boolean(startDate) &&
+    Boolean(endDate) &&
+    (schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6) &&
+    effectiveResult.status === 'RESOLVED';
 
   const handleAddDay = () => {
     if (!newDayDate) return;
     const newDay: CalendarDay = {
       id: `day-${Date.now()}`,
-      academicCalendarId: calendar?.id || 'cal-1',
+      academicCalendarId: calendar?.id || `cal-${academicSetting.id}`,
       date: newDayDate,
       status: newDayStatus,
       notes: newDayNotes || (newDayStatus === 'holiday' ? 'Hari Libur' : 'Kegiatan Khusus'),
@@ -182,36 +244,56 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
 
   const handleSaveCalendarConfig = () => {
     const updatedCalendar: AcademicCalendar = {
-      id: calendar?.id || `cal-${Date.now()}`,
+      id: calendar?.id || `cal-${academicSetting.id}`,
       academicSettingId: academicSetting.id,
       academicYear,
       semester,
       startDate,
       endDate,
       schoolDaysPerWeek,
+      sourceType,
+      sourceName: sourceName.trim() || undefined,
+      sourceRegion: sourceRegion.trim() || undefined,
       jpPerWeek,
       updatedAt: new Date().toISOString(),
     };
     onSaveCalendar(updatedCalendar, days);
-    setSaveNotification('Pengaturan Kalender & Alokasi JP berhasil disimpan!');
+    setSaveNotification('Konfigurasi Kalender & JP berhasil disimpan!');
     setTimeout(() => setSaveNotification(null), 3000);
   };
 
   const handleWeekChange = (itemId: string, week: number) => {
     setAllocations((prev) => {
-      const existingIndex = prev.findIndex((a) => a.atpItemId === itemId || a.tpId === itemId);
+      const existingIndex = prev.findIndex(
+        (a) =>
+          a.sourceId === itemId ||
+          a.atpItemId === itemId ||
+          a.tpId === itemId
+      );
       if (existingIndex >= 0) {
         const updated = [...prev];
-        updated[existingIndex] = { ...updated[existingIndex], weekNumber: week };
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          weekNumber: week,
+          startWeek: week,
+          endWeek: week,
+        };
         return updated;
       } else {
+        const currAtpItem = atp?.items?.find((i) => i.id === itemId);
+        const allocatedVal = isK13Curriculum ? (jpPerWeek || 0) : (currAtpItem?.jp ? Number(currAtpItem.jp) : (jpPerWeek || 0));
         const newAlloc: TimeAllocation = {
           id: `alloc-${Date.now()}-${itemId}`,
           academicSettingId: academicSetting.id,
-          atpItemId: itemId,
-          tpId: itemId,
+          sourceType: isK13Curriculum ? 'KD' : 'ATP_ITEM',
+          sourceId: itemId,
+          semester,
+          atpItemId: !isK13Curriculum ? itemId : undefined,
           weekNumber: week,
-          jp: jpPerWeek,
+          startWeek: week,
+          endWeek: week,
+          jp: allocatedVal,
+          allocatedJP: allocatedVal,
         };
         return [...prev, newAlloc];
       }
@@ -225,6 +307,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   };
 
   const handleExportKalender = async () => {
+    if (!startDate || !endDate || !schoolDaysPerWeek) {
+      alert('Kalender pendidikan belum lengkap. Lengkapi tanggal mulai, tanggal selesai, dan hari sekolah per pekan sebelum ekspor.');
+      return;
+    }
     setIsExporting('kalender');
     try {
       await generateKalenderAkademik({
@@ -232,17 +318,20 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         profile,
         academicSetting: {
           ...academicSetting,
-          subjectWeeklyJP: jpPerWeek,
+          subjectWeeklyJP: jpPerWeek ?? undefined,
           hoursSourceType: isCustomJP ? 'USER_OVERRIDE' : 'REGULATION_STANDARDIZED',
         },
         calendar: {
-          id: calendar?.id || 'cal-1',
+          id: calendar?.id || `cal-${academicSetting.id}`,
           academicSettingId: academicSetting.id,
           academicYear,
           semester,
           startDate,
           endDate,
           schoolDaysPerWeek,
+          sourceType,
+          sourceName: sourceName.trim() || undefined,
+          sourceRegion: sourceRegion.trim() || undefined,
           jpPerWeek,
           updatedAt: new Date().toISOString(),
         },
@@ -256,6 +345,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   };
 
   const handleExportAlokasi = async () => {
+    if (!startDate || !endDate || !schoolDaysPerWeek) {
+      alert('Kalender pendidikan belum lengkap. Lengkapi konfigurasi waktu sebelum ekspor alokasi waktu.');
+      return;
+    }
     setIsExporting('alokasi');
     try {
       await generateAlokasiWaktu({
@@ -263,18 +356,21 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         profile,
         academicSetting: {
           ...academicSetting,
-          subjectWeeklyJP: jpPerWeek,
+          subjectWeeklyJP: jpPerWeek ?? undefined,
           hoursSourceType: isCustomJP ? 'USER_OVERRIDE' : 'REGULATION_STANDARDIZED',
         },
         atp,
         calendar: {
-          id: calendar?.id || 'cal-1',
+          id: calendar?.id || `cal-${academicSetting.id}`,
           academicSettingId: academicSetting.id,
           academicYear,
           semester,
           startDate,
           endDate,
           schoolDaysPerWeek,
+          sourceType,
+          sourceName: sourceName.trim() || undefined,
+          sourceRegion: sourceRegion.trim() || undefined,
           jpPerWeek,
           updatedAt: new Date().toISOString(),
         },
@@ -317,8 +413,13 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               id="btn-export-kalender"
               type="button"
               onClick={handleExportKalender}
-              disabled={isExporting === 'kalender'}
-              className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 transition-colors"
+              disabled={isExporting === 'kalender' || !isCalendarConfigComplete}
+              title={!isCalendarConfigComplete ? 'Lengkapi data kalender terlebih dahulu' : 'Ekspor Kalender (.docx)'}
+              className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                isCalendarConfigComplete
+                  ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+                  : 'text-slate-400 bg-slate-50 border-slate-200 cursor-not-allowed'
+              }`}
             >
               <FileDown className="w-4 h-4 text-indigo-600" />
               <span>{isExporting === 'kalender' ? 'Mengekspor...' : 'Ekspor Kalender (.docx)'}</span>
@@ -327,14 +428,30 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               id="btn-export-alokasi"
               type="button"
               onClick={handleExportAlokasi}
-              disabled={isExporting === 'alokasi'}
-              className="inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 transition-colors"
+              disabled={isExporting === 'alokasi' || !isCalendarConfigComplete}
+              title={!isCalendarConfigComplete ? 'Lengkapi data kalender terlebih dahulu' : 'Ekspor Alokasi Waktu (.docx)'}
+              className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors ${
+                isCalendarConfigComplete
+                  ? 'text-slate-700 bg-slate-100 hover:bg-slate-200 border-slate-300'
+                  : 'text-slate-400 bg-slate-50 border-slate-200 cursor-not-allowed'
+              }`}
             >
               <FileDown className="w-4 h-4 text-emerald-600" />
               <span>{isExporting === 'alokasi' ? 'Mengekspor...' : 'Ekspor Alokasi Waktu (.docx)'}</span>
             </button>
           </div>
         </div>
+
+        {/* Completeness Warning Banner */}
+        {!isCalendarConfigComplete && (
+          <div className="mt-4 p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-amber-900 text-xs">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-amber-950">Status Kalender: Belum Lengkap. </span>
+              Lengkapi tanggal mulai semester, tanggal akhir semester, dan pilihan hari sekolah (5/6 hari) pada formulir di bawah. Sesuai prinsip ketat <em>NO DATA &gt; FAKE DATA</em>, sistem tidak membuat tanggal atau estimasi hari efektif fiktif sampai data definitif disimpan.
+            </div>
+          </div>
+        )}
 
         {/* Regulatory Provenance Card */}
         <div className="mt-4 p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-100 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-indigo-950">
@@ -353,8 +470,8 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                 )}
               </div>
               <p className="text-slate-600 mt-1">
-                Standar Intrakurikuler Resmi: <strong>{officialRule.weeklyJP || '-'} JP/pekan</strong> ({officialRule.annualJP ? `${officialRule.annualJP} JP/tahun` : 'Belum ditetapkan'})
-                {officialRule.kokurikulerAnnualJP ? ` • P5/Kokurikuler: ${officialRule.kokurikulerWeeklyJP || Math.round(officialRule.kokurikulerAnnualJP / 36)} JP/pekan (${officialRule.kokurikulerAnnualJP} JP/tahun)` : ''}
+                Standar Intrakurikuler Resmi: <strong>{officialRule.weeklyJP !== null ? `${officialRule.weeklyJP} JP/pekan` : 'Belum ditetapkan'}</strong> ({officialRule.annualJP ? `${officialRule.annualJP} JP/tahun` : 'Belum ditetapkan'})
+                {officialRule.kokurikulerAnnualJP ? ` • P5/Kokurikuler: ${officialRule.kokurikulerWeeklyJP ? `${officialRule.kokurikulerWeeklyJP} JP/pekan ` : ''}(${officialRule.kokurikulerAnnualJP} JP/tahun)` : ''}
               </p>
             </div>
           </div>
@@ -376,17 +493,25 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
           <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4">
             <span className="text-xs font-medium text-slate-500 block">Minggu Efektif Semester</span>
-            <span className="text-2xl font-bold text-slate-800 mt-1 block">{effectiveWeeks} Pekan</span>
+            <span className="text-2xl font-bold text-slate-800 mt-1 block">
+              {effectiveWeeks !== null ? `${effectiveWeeks} Pekan` : '-'}
+            </span>
             <span className="text-xs text-slate-500">
-              {effectiveResult.effectiveDaysCount} hari efektif ({effectiveResult.holidaysCount} hari libur)
+              {effectiveResult.status === 'RESOLVED'
+                ? `${effectiveResult.effectiveLearningDays} hari efektif (${effectiveResult.holidayDays} hari libur)`
+                : 'Kalender belum dikonfigurasi'}
             </span>
           </div>
 
           <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4">
             <span className="text-xs font-medium text-slate-500 block">Total JP Efektif Tersedia</span>
-            <span className="text-2xl font-bold text-indigo-600 mt-1 block">{totalAvailableJP} JP</span>
+            <span className="text-2xl font-bold text-indigo-600 mt-1 block">
+              {totalAvailableJP !== null ? `${totalAvailableJP} JP` : '-'}
+            </span>
             <span className="text-[11px] text-indigo-600/80 font-medium">
-              {effectiveWeeks} pekan &times; {jpPerWeek} JP/pekan
+              {effectiveWeeks !== null && jpPerWeek !== null
+                ? `${effectiveWeeks} pekan × ${jpPerWeek} JP/pekan`
+                : 'Menunggu kelengkapan data'}
             </span>
           </div>
 
@@ -400,19 +525,31 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
             </span>
           </div>
 
-          <div className={`border rounded-xl p-4 ${jpDifference < 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+          <div className={`border rounded-xl p-4 ${jpDifference === null ? 'bg-slate-50 border-slate-200' : jpDifference < 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
             <span className="text-xs font-medium text-slate-600 block">Analisis Selisih Jam</span>
-            <span className={`text-xl font-bold mt-1 block ${jpDifference < 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
-              {jpDifference === 0 ? 'Tepat Sesuai (0 JP)' : jpDifference > 0 ? `+${jpDifference} JP Fleksibel` : `${jpDifference} JP Defisit`}
+            <span className={`text-xl font-bold mt-1 block ${jpDifference === null ? 'text-slate-500' : jpDifference < 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {jpDifference === null
+                ? 'Belum Dihitung'
+                : jpDifference === 0
+                ? 'Tepat Sesuai (0 JP)'
+                : jpDifference > 0
+                ? `+${jpDifference} JP Fleksibel`
+                : `${jpDifference} JP Defisit`}
             </span>
             <span className="text-xs text-slate-500">
-              {jpDifference === 0 ? 'Alokasi waktu pas dan terdistribusi' : jpDifference > 0 ? 'Tersedia jam untuk penguatan / cadangan' : 'Jam materi melebihi waktu efektif'}
+              {jpDifference === null
+                ? 'Lengkapi konfigurasi kalender & JP'
+                : jpDifference === 0
+                ? 'Alokasi waktu pas dan terdistribusi'
+                : jpDifference > 0
+                ? 'Tersedia jam untuk penguatan / cadangan'
+                : 'Jam materi melebihi waktu efektif'}
             </span>
           </div>
         </div>
 
         {/* Detailed Explanation / Warning if discrepancy exists */}
-        {jpDifference < 0 && (
+        {jpDifference !== null && jpDifference < 0 && (
           <div className="mt-4 p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-amber-900 text-xs">
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
@@ -423,12 +560,12 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           </div>
         )}
 
-        {jpDifference > 0 && (
+        {jpDifference !== null && jpDifference > 0 && (
           <div className="mt-4 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-emerald-900 text-xs">
             <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-semibold text-emerald-950">Optimalisasi Selisih Waktu (+{jpDifference} JP): </span>
-              Sisa jam efektif ini bukan semata waktu kosong, melainkan dapat dialokasikan untuk: (1) Asesmen Sumatif Akhir Semester, (2) Kegiatan Remedial & Pengayaan terstruktur, (3) Penguatan Proyek/P5, atau (4) Cadangan waktu fleksibilitas agenda sekolah.
+              Sisa jam efektif ini dapat dialokasikan untuk: (1) Asesmen Sumatif Akhir Semester, (2) Kegiatan Remedial &amp; Pengayaan terstruktur, (3) Penguatan Proyek/P5, atau (4) Cadangan waktu fleksibilitas agenda sekolah.
             </div>
           </div>
         )}
@@ -452,7 +589,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                   value={academicYear}
                   onChange={(e) => setAcademicYear(e.target.value)}
                   className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  placeholder="2026/2027"
+                  placeholder="Contoh: 2024/2025"
                 />
               </div>
 
@@ -460,17 +597,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                 <label className="block text-xs font-medium text-slate-700 mb-1">Semester</label>
                 <select
                   value={semester}
-                  onChange={(e) => {
-                    const newSem = e.target.value as '1' | '2';
-                    setSemester(newSem);
-                    if (newSem === '1') {
-                      setStartDate('2026-07-13');
-                      setEndDate('2026-12-18');
-                    } else {
-                      setStartDate('2027-01-04');
-                      setEndDate('2027-06-18');
-                    }
-                  }}
+                  onChange={(e) => setSemester(e.target.value as '1' | '2')}
                   className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
                 >
                   <option value="1">Semester 1 (Ganjil)</option>
@@ -505,10 +632,14 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">Hari Sekolah / Pekan</label>
                 <select
-                  value={schoolDaysPerWeek}
-                  onChange={(e) => setSchoolDaysPerWeek(Number(e.target.value))}
+                  value={schoolDaysPerWeek ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setSchoolDaysPerWeek(val);
+                  }}
                   className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
                 >
+                  <option value="">-- Pilih Hari Kerja --</option>
                   <option value={5}>5 Hari (Senin - Jumat)</option>
                   <option value={6}>6 Hari (Senin - Sabtu)</option>
                 </select>
@@ -517,19 +648,54 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-medium text-slate-700">JP Intrakurikuler / Pekan</label>
-                  {officialRule.isOfficial && (
+                  {officialRule.isOfficial && officialRule.weeklyJP !== null && (
                     <span className="text-[10px] text-slate-500 font-normal">Resmi: {officialRule.weeklyJP} JP</span>
                   )}
                 </div>
                 <input
                   type="number"
                   min={1}
-                  max={12}
-                  value={jpPerWeek}
-                  onChange={(e) => setJpPerWeek(Math.max(1, Number(e.target.value) || 1))}
+                  max={20}
+                  value={jpPerWeek ?? ''}
+                  placeholder="Masukkan JP"
+                  onChange={(e) => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setJpPerWeek(val);
+                  }}
                   className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none font-semibold text-indigo-900"
                 />
               </div>
+            </div>
+
+            {/* Provenance Metadata */}
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <span className="text-[11px] font-bold text-slate-600 block">Sumber &amp; Provenance Kalender:</span>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={sourceType}
+                  onChange={(e) => setSourceType(e.target.value as CalendarSourceType)}
+                  className="text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                >
+                  <option value="REGIONAL_EDUCATION_CALENDAR">Kalender Dinas Pendidikan</option>
+                  <option value="SCHOOL_ADJUSTMENT">Penyesuaian Satuan Pendidikan</option>
+                  <option value="MANUAL">Input Manual Guru</option>
+                  <option value="IMPORTED">Import Kalender Eksternal</option>
+                </select>
+                <input
+                  type="text"
+                  value={sourceRegion}
+                  onChange={(e) => setSourceRegion(e.target.value)}
+                  placeholder="Wilayah / Daerah (cth: Prov. Jawa Barat)"
+                  className="text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+                />
+              </div>
+              <input
+                type="text"
+                value={sourceName}
+                onChange={(e) => setSourceName(e.target.value)}
+                placeholder="Nomor SK / Nama Dokumen Rujukan Kalender"
+                className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
+              />
             </div>
 
             {/* Monthly Breakdown Preview */}
@@ -554,7 +720,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               className="w-full mt-2 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors"
             >
               <Save className="w-4 h-4" />
-              <span>Simpan Konfigurasi Kalender & JP</span>
+              <span>Simpan Konfigurasi Kalender &amp; JP</span>
             </button>
           </div>
         </div>
@@ -564,7 +730,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
             <div className="flex items-center gap-2">
               <CalendarCheck className="w-5 h-5 text-indigo-600" />
-              <h3 className="font-bold text-slate-800 text-base">Agenda Libur & Kegiatan Khusus Satuan Pendidikan</h3>
+              <h3 className="font-bold text-slate-800 text-base">Agenda Libur &amp; Kegiatan Khusus Satuan Pendidikan</h3>
             </div>
             <span className="text-xs text-slate-500 font-medium">{days.length} entri tercatat</span>
           </div>
@@ -673,7 +839,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                   : 'Pemetaan Pekan Pembelajaran per TP (Alur Tujuan Pembelajaran)'}
               </h3>
               <p className="text-xs text-slate-500">
-                Distribusikan urutan pekan mengajar efektif ({effectiveWeeks} pekan) untuk setiap unit materi
+                Distribusikan urutan pekan mengajar efektif ({effectiveWeeks !== null ? `${effectiveWeeks} pekan` : 'belum ditentukan'}) untuk setiap unit materi
               </p>
             </div>
           </div>
@@ -703,16 +869,23 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                   <tr>
                     <th className="py-2.5 px-3 w-12 text-center">No</th>
                     <th className="py-2.5 px-3 w-28">Kompetensi Dasar (KD)</th>
-                    <th className="py-2.5 px-3">Indikator & Ruang Lingkup Materi</th>
+                    <th className="py-2.5 px-3">Indikator &amp; Ruang Lingkup Materi</th>
                     <th className="py-2.5 px-3 w-24 text-center">Alokasi JP</th>
                     <th className="py-2.5 px-3 w-40 text-center">Penempatan Pekan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {k13Analysis.items.map((item, index) => {
-                    const matchedAlloc = allocations.find((a) => a.atpItemId === item.id || a.tpId === item.id);
-                    const defaultWeek = Math.min(effectiveWeeks, index + 1);
+                    const matchedAlloc = allocations.find(
+                      (a) =>
+                        (a.sourceType === 'KD' && a.sourceId === item.id) ||
+                        a.sourceId === item.id ||
+                        a.atpItemId === item.id ||
+                        a.tpId === item.id
+                    );
+                    const defaultWeek = effectiveWeeks ? Math.min(effectiveWeeks, index + 1) : index + 1;
                     const currentWeek = matchedAlloc?.weekNumber || defaultWeek;
+                    const displayJP = matchedAlloc?.allocatedJP ?? matchedAlloc?.jp ?? (item.alokasiJp ? Number(item.alokasiJp) : null);
 
                     return (
                       <tr key={item.id} className="hover:bg-slate-50/80">
@@ -722,18 +895,24 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                           <div className="font-medium text-slate-800">{item.indikator || item.materi}</div>
                           <div className="text-[11px] text-slate-500 mt-0.5">Materi Pokok: {item.materi || '-'}</div>
                         </td>
-                        <td className="py-2.5 px-3 text-center font-semibold text-slate-700">{jpPerWeek} JP</td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                          {displayJP !== null ? `${displayJP} JP` : '-'}
+                        </td>
                         <td className="py-2.5 px-3 text-center">
                           <select
                             value={currentWeek}
                             onChange={(e) => handleWeekChange(item.id, Number(e.target.value))}
                             className="text-xs px-2 py-1.5 border border-slate-300 rounded bg-white text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                           >
-                            {Array.from({ length: effectiveWeeks }, (_, i) => i + 1).map((w) => (
-                              <option key={w} value={w}>
-                                Pekan ke-{w}
-                              </option>
-                            ))}
+                            {effectiveWeeks && effectiveWeeks > 0 ? (
+                              Array.from({ length: effectiveWeeks }, (_, i) => i + 1).map((w) => (
+                                <option key={w} value={w}>
+                                  Pekan ke-{w}
+                                </option>
+                              ))
+                            ) : (
+                              <option value={currentWeek}>Pekan ke-{currentWeek}</option>
+                            )}
                           </select>
                         </td>
                       </tr>
@@ -757,16 +936,26 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                   <tr>
                     <th className="py-2.5 px-3 w-12 text-center">No</th>
                     <th className="py-2.5 px-3 w-28">Kode TP</th>
-                    <th className="py-2.5 px-3">Tujuan Pembelajaran & Ruang Lingkup Materi</th>
+                    <th className="py-2.5 px-3">Tujuan Pembelajaran &amp; Ruang Lingkup Materi</th>
                     <th className="py-2.5 px-3 w-24 text-center">Beban JP</th>
                     <th className="py-2.5 px-3 w-40 text-center">Penempatan Pekan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {(atp.items || []).map((item, index) => {
-                    const matchedAlloc = allocations.find((a) => a.atpItemId === item.id || a.tpId === item.tpId);
-                    const defaultWeek = Math.min(effectiveWeeks, index + 1);
+                    const matchedAlloc = allocations.find(
+                      (a) =>
+                        (a.sourceType === 'ATP_ITEM' && a.sourceId === item.id) ||
+                        a.atpItemId === item.id ||
+                        a.sourceId === item.id ||
+                        a.tpId === item.tpId
+                    );
+                    const defaultWeek = effectiveWeeks ? Math.min(effectiveWeeks, index + 1) : index + 1;
                     const currentWeek = matchedAlloc?.weekNumber || defaultWeek;
+                    const displayJP =
+                      item.jp !== undefined && item.jp !== null
+                        ? Number(item.jp)
+                        : matchedAlloc?.allocatedJP ?? matchedAlloc?.jp ?? null;
 
                     return (
                       <tr key={item.id} className="hover:bg-slate-50/80">
@@ -776,18 +965,24 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
                           <div className="font-medium text-slate-800">{item.tpStatement || item.competency}</div>
                           <div className="text-[11px] text-slate-500 mt-0.5">Lingkup Materi: {item.contentScope || item.subMaterial || '-'}</div>
                         </td>
-                        <td className="py-2.5 px-3 text-center font-semibold text-slate-700">{item.jp || jpPerWeek} JP</td>
+                        <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                          {displayJP !== null ? `${displayJP} JP` : '-'}
+                        </td>
                         <td className="py-2.5 px-3 text-center">
                           <select
                             value={currentWeek}
                             onChange={(e) => handleWeekChange(item.id, Number(e.target.value))}
                             className="text-xs px-2 py-1.5 border border-slate-300 rounded bg-white text-slate-700 font-medium focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                           >
-                            {Array.from({ length: effectiveWeeks }, (_, i) => i + 1).map((w) => (
-                              <option key={w} value={w}>
-                                Pekan ke-{w}
-                              </option>
-                            ))}
+                            {effectiveWeeks && effectiveWeeks > 0 ? (
+                              Array.from({ length: effectiveWeeks }, (_, i) => i + 1).map((w) => (
+                                <option key={w} value={w}>
+                                  Pekan ke-{w}
+                                </option>
+                              ))
+                            ) : (
+                              <option value={currentWeek}>Pekan ke-{currentWeek}</option>
+                            )}
                           </select>
                         </td>
                       </tr>
@@ -802,4 +997,5 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
     </div>
   );
 };
+
 

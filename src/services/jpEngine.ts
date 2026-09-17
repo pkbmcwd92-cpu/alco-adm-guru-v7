@@ -688,6 +688,8 @@ export function calculateAvailableJP(params: {
   effectiveLearningDays?: number | null;
   schoolDaysPerWeek?: number | null;
   weeklyJPSource?: 'ACTUAL_SCHEDULE' | 'REFERENCE_EQUIVALENT';
+  calendarStatus?: 'RESOLVED' | 'UNRESOLVED' | 'PARTIAL';
+  effectiveDayStatus?: 'RESOLVED' | 'UNRESOLVED' | 'PARTIAL';
   actualScheduledAnnualJP?: number | null;
   semester?: string;
   academicYear?: string;
@@ -753,8 +755,98 @@ export function calculateAvailableJP(params: {
     };
   }
 
-  const subjectWeeklyJP = Math.max(0, Number(params.subjectWeeklyJP) || 0);
-  const effectiveLearningDays = Math.max(0, Number(params.effectiveLearningDays) || 0);
+  if (
+    params.calendarStatus === 'PARTIAL' ||
+    params.calendarStatus === 'UNRESOLVED' ||
+    params.effectiveDayStatus === 'PARTIAL' ||
+    params.effectiveDayStatus === 'UNRESOLVED'
+  ) {
+    return {
+      status: 'UNRESOLVED',
+      subjectWeeklyJP: params.subjectWeeklyJP ?? null,
+      effectiveLearningDays: params.effectiveLearningDays ?? null,
+      schoolDaysPerWeek: validDays,
+      effectiveWeeksEquivalent: null,
+      effectiveWeeksRounded: null,
+      availableJP: null,
+      unresolvedReason:
+        'Kalender pendidikan belum lengkap. Hari sekolah terjadwal memiliki status yang belum terdefinisi.',
+      formula: 'JP Mingguan × (Hari Efektif Belajar ÷ Hari Sekolah/Minggu)',
+      formulaCalculation: 'Kalender pendidikan belum lengkap (UNRESOLVED)',
+      jpPerWeek: params.subjectWeeklyJP ?? null,
+      effectiveWeeks: null,
+      officialAnnualJP: params.officialAnnualJP ?? undefined,
+      details: {
+        semester: params.semester,
+        academicYear: params.academicYear,
+        level: params.level,
+        grade: params.grade,
+        subject: params.subject,
+      },
+    };
+  }
+
+  if (
+    params.subjectWeeklyJP === null ||
+    params.subjectWeeklyJP === undefined ||
+    isNaN(Number(params.subjectWeeklyJP)) ||
+    Number(params.subjectWeeklyJP) <= 0
+  ) {
+    return {
+      status: 'UNRESOLVED',
+      subjectWeeklyJP: null,
+      effectiveLearningDays: params.effectiveLearningDays ?? null,
+      schoolDaysPerWeek: validDays,
+      effectiveWeeksEquivalent: null,
+      effectiveWeeksRounded: null,
+      availableJP: null,
+      unresolvedReason: 'Jam Pelajaran (JP) mingguan belum ditentukan.',
+      formula: 'JP Mingguan × (Hari Efektif Belajar ÷ Hari Sekolah/Minggu)',
+      formulaCalculation: 'JP mingguan belum ditentukan (UNRESOLVED)',
+      jpPerWeek: null,
+      effectiveWeeks: null,
+      officialAnnualJP: params.officialAnnualJP ?? undefined,
+      details: {
+        semester: params.semester,
+        academicYear: params.academicYear,
+        level: params.level,
+        grade: params.grade,
+        subject: params.subject,
+      },
+    };
+  }
+
+  if (
+    params.effectiveLearningDays === null ||
+    params.effectiveLearningDays === undefined ||
+    isNaN(Number(params.effectiveLearningDays))
+  ) {
+    return {
+      status: 'UNRESOLVED',
+      subjectWeeklyJP: Number(params.subjectWeeklyJP),
+      effectiveLearningDays: null,
+      schoolDaysPerWeek: validDays,
+      effectiveWeeksEquivalent: null,
+      effectiveWeeksRounded: null,
+      availableJP: null,
+      unresolvedReason: 'Hari efektif belajar belum ditentukan.',
+      formula: 'JP Mingguan × (Hari Efektif Belajar ÷ Hari Sekolah/Minggu)',
+      formulaCalculation: 'Hari efektif belajar belum ditentukan (UNRESOLVED)',
+      jpPerWeek: Number(params.subjectWeeklyJP),
+      effectiveWeeks: null,
+      officialAnnualJP: params.officialAnnualJP ?? undefined,
+      details: {
+        semester: params.semester,
+        academicYear: params.academicYear,
+        level: params.level,
+        grade: params.grade,
+        subject: params.subject,
+      },
+    };
+  }
+
+  const subjectWeeklyJP = Number(params.subjectWeeklyJP);
+  const effectiveLearningDays = Math.max(0, Number(params.effectiveLearningDays));
 
   const { effectiveWeeksEquivalent, effectiveWeeksRounded } = calculateEffectiveWeeks(
     effectiveLearningDays,
