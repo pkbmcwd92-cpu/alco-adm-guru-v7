@@ -35,11 +35,13 @@ import {
   K13Analysis,
   K13KKM,
   LearningPlan,
+  AssessmentPlan,
 } from '../../types';
 import { TimePlanningManager } from './TimePlanningManager';
 import { AttendanceManager } from './AttendanceManager';
 import { KKTPManager } from './KKTPManager';
 import { AssessmentGradeManager } from './AssessmentGradeManager';
+import { AssessmentPlanManager } from './AssessmentPlanManager';
 import { FollowUpManager } from './FollowUpManager';
 import { LearningPlanManager } from './LearningPlanManager';
 import { AdminDocsExport } from '../AdminDocsExport';
@@ -77,6 +79,7 @@ interface AdministrationHubProps {
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
   learningPlans?: LearningPlan[];
+  assessmentPlans?: AssessmentPlan[];
   initialTab?: AdministrationTab;
   onSaveCalendar: (calendar: AcademicCalendar, days: CalendarDay[]) => void;
   onSaveTimeAllocations: (allocations: TimeAllocation[]) => void;
@@ -85,6 +88,8 @@ interface AdministrationHubProps {
   onSaveCriteria: (criteria: AssessmentCriterion[]) => void;
   onSaveAssessment: (assessment: Assessment, results: AssessmentResult[]) => void;
   onDeleteAssessment: (assessmentId: string) => void;
+  onSaveAssessmentPlan?: (plan: AssessmentPlan) => void;
+  onDeleteAssessmentPlan?: (planId: string) => void;
   onSaveRemedials: (records: RemedialRecord[]) => void;
   onSaveEnrichments: (records: EnrichmentRecord[]) => void;
   onSaveK13Analysis: (analysis: K13Analysis) => void;
@@ -118,6 +123,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   k13Analysis,
   k13KKM,
   learningPlans = [],
+  assessmentPlans = [],
   initialTab = 'time_planning',
   onSaveCalendar,
   onSaveTimeAllocations,
@@ -126,6 +132,8 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   onSaveCriteria,
   onSaveAssessment,
   onDeleteAssessment,
+  onSaveAssessmentPlan,
+  onDeleteAssessmentPlan,
   onSaveRemedials,
   onSaveEnrichments,
   onSaveK13Analysis,
@@ -137,6 +145,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
 }) => {
   const isK13Active = isK13(academicSetting);
   const [activeTab, setActiveTab] = useState<AdministrationTab>(initialTab);
+  const [assessmentSubTab, setAssessmentSubTab] = useState<'plan_master' | 'gradebook'>('plan_master');
 
   const tabs = [
     {
@@ -333,25 +342,72 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
         )}
 
         {activeTab === 'assessment_grades' && (
-          <AssessmentGradeManager
-            school={school}
-            profile={profile}
-            academicSetting={academicSetting}
-            tp={tp}
-            students={students}
-            assessments={assessments}
-            assessmentResults={assessmentResults}
-            onSaveAssessment={onSaveAssessment}
-            onDeleteAssessment={onDeleteAssessment}
-            onQuickAddRemedial={(record) => {
-              const updated = [...(remedials || []), record];
-              onSaveRemedials(updated);
-            }}
-            onQuickAddEnrichment={(record) => {
-              const updated = [...(enrichments || []), record];
-              onSaveEnrichments(updated);
-            }}
-          />
+          <div className="space-y-4">
+            {/* Sub-navigation selector for Assessment Master vs Gradebook */}
+            <div className="flex bg-slate-200/80 p-1 rounded-xl w-fit text-xs font-semibold">
+              <button
+                onClick={() => setAssessmentSubTab('plan_master')}
+                className={`px-4 py-2 rounded-lg transition-all ${
+                  assessmentSubTab === 'plan_master'
+                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                1. Perangkat & Rencana Asesmen (Assessment Master)
+              </button>
+              <button
+                onClick={() => setAssessmentSubTab('gradebook')}
+                className={`px-4 py-2 rounded-lg transition-all ${
+                  assessmentSubTab === 'gradebook'
+                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                2. Pengolahan Nilai & Rapor Siswa
+              </button>
+            </div>
+
+            {assessmentSubTab === 'plan_master' ? (
+              <AssessmentPlanManager
+                school={school}
+                profile={profile}
+                academicSetting={academicSetting}
+                workspace={workspace}
+                tp={tp}
+                k13Analysis={k13Analysis}
+                assessmentCriteria={assessmentCriteria}
+                learningPlans={learningPlans}
+                assessmentPlans={assessmentPlans}
+                assessments={assessments}
+                onSaveAssessmentPlan={(plan) => {
+                  if (onSaveAssessmentPlan) onSaveAssessmentPlan(plan);
+                }}
+                onDeleteAssessmentPlan={(planId) => {
+                  if (onDeleteAssessmentPlan) onDeleteAssessmentPlan(planId);
+                }}
+              />
+            ) : (
+              <AssessmentGradeManager
+                school={school}
+                profile={profile}
+                academicSetting={academicSetting}
+                tp={tp}
+                students={students}
+                assessments={assessments}
+                assessmentResults={assessmentResults}
+                onSaveAssessment={onSaveAssessment}
+                onDeleteAssessment={onDeleteAssessment}
+                onQuickAddRemedial={(record) => {
+                  const updated = [...(remedials || []), record];
+                  onSaveRemedials(updated);
+                }}
+                onQuickAddEnrichment={(record) => {
+                  const updated = [...(enrichments || []), record];
+                  onSaveEnrichments(updated);
+                }}
+              />
+            )}
+          </div>
         )}
 
         {activeTab === 'attendance' && (

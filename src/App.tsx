@@ -41,6 +41,8 @@ import {
   saveK13KKM,
   saveLearningPlan,
   deleteLearningPlan,
+  saveAssessmentPlan,
+  deleteAssessmentPlan,
   setActiveProfileId,
   setActiveWorkspaceId,
   createWorkspace,
@@ -108,6 +110,7 @@ export function App() {
     k13Analysis,
     k13KKM,
     learningPlans = [],
+    assessmentPlans = [],
     allWorkspaces = [],
     allWorkspacesForProfile = [],
   } = currentWorkspaceData;
@@ -272,6 +275,16 @@ export function App() {
 
   const handleDeleteLearningPlan = (planId: string) => {
     deleteLearningPlan(planId);
+    refreshData();
+  };
+
+  const handleSaveAssessmentPlan = (plan: any) => {
+    saveAssessmentPlan(plan);
+    refreshData();
+  };
+
+  const handleDeleteAssessmentPlan = (planId: string) => {
+    deleteAssessmentPlan(planId);
     refreshData();
   };
 
@@ -480,6 +493,7 @@ export function App() {
               k13Analysis={k13Analysis}
               k13KKM={k13KKM}
               learningPlans={learningPlans || []}
+              assessmentPlans={assessmentPlans || []}
               onSaveCalendar={handleSaveCalendar}
               onSaveTimeAllocations={handleSaveTimeAllocations}
               onSaveStudents={handleSaveStudents}
@@ -487,6 +501,8 @@ export function App() {
               onSaveCriteria={handleSaveCriteria}
               onSaveAssessment={handleSaveAssessment}
               onDeleteAssessment={handleDeleteAssessment}
+              onSaveAssessmentPlan={handleSaveAssessmentPlan}
+              onDeleteAssessmentPlan={handleDeleteAssessmentPlan}
               onSaveRemedials={handleSaveRemedials}
               onSaveEnrichments={handleSaveEnrichments}
               onSaveK13Analysis={handleSaveK13Analysis}

@@ -27,10 +27,12 @@ import {
   PrincipalHistory,
   CPAnalysisData,
   LearningPlan,
+  AssessmentPlan,
 } from '../types';
 import { getCurriculumTypeFromSetting, isK13, isMerdeka } from './curriculumRouter';
 import { validateATPReferences, normalizeATPReferences, validateATPDataWorkflow } from './cpWorkflowService';
 import { migrateLegacyLearningPlan, invalidatePlanIfDependenciesChanged } from './learningPlanService';
+import { invalidateAssessmentPlanDependencies } from './assessmentPlanService';
 import {
   INITIAL_PROFILES,
   INITIAL_SCHOOL,
@@ -214,6 +216,7 @@ export function getInitialState(): AppStorageState {
     k13Analyses: [],
     k13KKMs: [],
     learningPlans: [],
+    assessmentPlans: [],
   };
 }
 
@@ -329,6 +332,7 @@ export function loadAppStorage(): AppStorageState {
     if (!Array.isArray(parsed.k13Analyses)) { parsed.k13Analyses = []; needsResave = true; }
     if (!Array.isArray(parsed.k13KKMs)) { parsed.k13KKMs = []; needsResave = true; }
     if (!Array.isArray(parsed.learningPlans)) { parsed.learningPlans = []; needsResave = true; }
+    if (!Array.isArray(parsed.assessmentPlans)) { parsed.assessmentPlans = []; needsResave = true; }
 
     // Ensure core curriculum data arrays exist and items are sanitized
     if (!Array.isArray(parsed.cps) || parsed.cps.length === 0) {
@@ -822,6 +826,17 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
     return lp;
   });
 
+  const rawAssessmentPlans = (state.assessmentPlans || []).filter((ap) => ap.academicSettingId === academicSetting!.id);
+  const assessmentPlans = rawAssessmentPlans.map((ap) => {
+    if (ap.workflowStatus === 'SIAP') {
+      const reval = invalidateAssessmentPlanDependencies(ap, { academicSetting, tp, k13Analysis, assessmentCriteria, learningPlans });
+      if (reval.isInvalidated) {
+        return reval.plan;
+      }
+    }
+    return ap;
+  });
+
   return {
     profile,
     school,
@@ -861,6 +876,7 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
     k13Analysis,
     k13KKM,
     learningPlans,
+    assessmentPlans,
   };
 }
 
@@ -1971,6 +1987,7 @@ export function importAppDataFromJSON(jsonStr: string): boolean {
       learningPlans: Array.isArray(data.learningPlans)
         ? data.learningPlans.map((lp: any) => migrateLegacyLearningPlan(lp, lp.academicSettingId || ''))
         : [],
+      assessmentPlans: Array.isArray(data.assessmentPlans) ? data.assessmentPlans : [],
     };
     saveAppStorage(state);
     return true;
@@ -2006,6 +2023,45 @@ export function deleteLearningPlan(planId: string): void {
 export function getLearningPlansForSetting(academicSettingId: string): LearningPlan[] {
   const state = loadAppStorage();
   return (state.learningPlans || []).filter((p) => p.academicSettingId === academicSettingId);
+}
+
+export function saveAssessmentPlan(plan: AssessmentPlan): void {
+  const state = loadAppStorage();
+  if (!state.assessmentPlans) state.assessmentPlans = [];
+  const idx = state.assessmentPlans.findIndex((p) => p.id === plan.id);
+  const updatedPlan: AssessmentPlan = {
+    ...plan,
+    updatedAt: new Date().toISOString(),
+  };
+  if (idx >= 0) {
+    state.assessmentPlans[idx] = updatedPlan;
+  } else {
+    state.assessmentPlans.push(updatedPlan);
+  }
+  saveAppStorage(state);
+}
+
+export function deleteAssessmentPlan(planId: string): void {
+  const state = loadAppStorage();
+  if (!state.assessmentPlans) return;
+  state.assessmentPlans = state.assessmentPlans.filter((p) => p.id !== planId);
+  saveAppStorage(state);
+}
+
+export function getAssessmentPlansForSetting(academicSettingId: string): AssessmentPlan[] {
+  const state = loadAppStorage();
+  return (state.assessmentPlans || []).filter((p) => p.academicSettingId === academicSettingId);
+}
+
+export function saveAssessmentPlansBulk(plans: AssessmentPlan[]): void {
+  const state = loadAppStorage();
+  if (!state.assessmentPlans) state.assessmentPlans = [];
+  const planMap = new Map(state.assessmentPlans.map((p) => [p.id, p]));
+  plans.forEach((p) => {
+    planMap.set(p.id, { ...p, updatedAt: new Date().toISOString() });
+  });
+  state.assessmentPlans = Array.from(planMap.values());
+  saveAppStorage(state);
 }
 
 export function resetToDefaultData(): void {

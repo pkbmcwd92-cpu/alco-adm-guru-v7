@@ -639,6 +639,88 @@ export interface LearningPlan {
   confirmedAt?: string;
 }
 
+// ==========================================
+// CANONICAL ASSESSMENT PLAN DATA MODEL (AUDIT 9A)
+// ==========================================
+export type AssessmentPurpose =
+  | 'FORMATIVE'
+  | 'SUMMATIVE';
+
+export type AssessmentTiming =
+  | 'PRE'
+  | 'DURING'
+  | 'POST'
+  | 'MID_SEMESTER'
+  | 'END_SEMESTER'
+  | 'END_YEAR'
+  | 'END_LEVEL'
+  | 'CUSTOM';
+
+export type AssessmentScopeType =
+  | 'TP'
+  | 'MULTI_TP'
+  | 'UNIT'
+  | 'SEMESTER'
+  | 'YEAR'
+  | 'LEVEL'
+  | 'CUSTOM';
+
+export type AssessmentInstrumentType =
+  | 'WRITTEN_TEST'
+  | 'ORAL_TEST'
+  | 'PERFORMANCE'
+  | 'OBSERVATION'
+  | 'ASSIGNMENT'
+  | 'PROJECT'
+  | 'PRODUCT'
+  | 'PORTFOLIO'
+  | 'SELF_ASSESSMENT'
+  | 'PEER_ASSESSMENT';
+
+export interface AssessmentInstrumentRef {
+  id: string;
+  type: AssessmentInstrumentType;
+  label?: string;
+}
+
+export interface AssessmentPlan {
+  id: string;
+  academicSettingId: string;
+  workspaceId?: string;
+
+  title: string;
+
+  purpose: AssessmentPurpose;
+  timing: AssessmentTiming;
+  scopeType: AssessmentScopeType;
+
+  tpIds: string[];
+  criterionIds: string[];
+
+  learningPlanIds?: string[];
+
+  instruments: AssessmentInstrumentRef[];
+
+  displayLabel?: string;
+  customTimingLabel?: string;
+  customScopeLabel?: string;
+
+  workflowStatus:
+    | 'DRAFT'
+    | 'PERLU_DILENGKAPI'
+    | 'SIAP';
+
+  needsReview?: boolean;
+  reviewReason?: string;
+
+  revision?: number;
+  provenance?: DataProvenance;
+
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+}
+
 export type AssessmentType = 'formatif' | 'sumatif_lingkup_materi' | 'sumatif_akhir_semester';
 
 export interface Assessment {
@@ -842,6 +924,7 @@ export interface ProfileWorkspaceData {
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
   learningPlans: LearningPlan[];
+  assessmentPlans: AssessmentPlan[];
 }
 
 export interface AppStorageState {
@@ -877,6 +960,7 @@ export interface AppStorageState {
   k13Analyses?: K13Analysis[];
   k13KKMs?: K13KKM[];
   learningPlans?: LearningPlan[];
+  assessmentPlans?: AssessmentPlan[];
 }
 
 export type AppDataStore = AppStorageState;
