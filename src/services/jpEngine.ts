@@ -896,6 +896,39 @@ export function calculateAvailableJP(params: {
 }
 
 /**
+ * Canonical Semester Resolver:
+ * Resolve semester ('1' | '2' | null) secara jujur dari data nyata tanpa asumsi diam (NO ASSUMPTION).
+ * Mengembalikan '1' untuk valid semester 1, '2' untuk valid semester 2, dan null untuk missing/unresolved/invalid.
+ */
+export function resolveSemester(
+  calendarSemester?: string | number | null,
+  settingSemester?: string | number | null
+): '1' | '2' | null {
+  const parseSem = (val?: string | number | null): '1' | '2' | null => {
+    if (val === null || val === undefined) return null;
+    const str = String(val).trim().toLowerCase();
+    if (!str) return null;
+    // Cek semester 2 secara eksplisit
+    if (str === '2' || str.includes('2') || str.includes('genap')) {
+      return '2';
+    }
+    // Cek semester 1 secara eksplisit
+    if (str === '1' || str.includes('1') || str.includes('ganjil')) {
+      return '1';
+    }
+    return null;
+  };
+
+  const fromCal = parseSem(calendarSemester);
+  if (fromCal) return fromCal;
+
+  const fromSetting = parseSem(settingSemester);
+  if (fromSetting) return fromSetting;
+
+  return null;
+}
+
+/**
  * Normalisasi objek alokasi ke model shared LearningTimeAllocation
  */
 export function normalizeLearningAllocation(raw: Partial<LearningTimeAllocation | TimeAllocation>): LearningTimeAllocation {
@@ -917,12 +950,13 @@ export function normalizeLearningAllocation(raw: Partial<LearningTimeAllocation 
       sourceType = 'LEGACY';
     }
   }
+  const resolvedSem = resolveSemester((raw as Record<string, any>).semester);
   return {
     id: raw.id || `alloc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     academicSettingId: raw.academicSettingId || '',
     sourceType,
     sourceId,
-    semester: ((raw as Record<string, any>).semester === '2' || (raw as Record<string, any>).semester === 'Semester 2') ? '2' : '1',
+    semester: resolvedSem ?? (raw as Record<string, any>).semester ?? '',
     allocatedJP,
     startWeek,
     endWeek: raw.endWeek ?? startWeek,

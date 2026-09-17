@@ -32,6 +32,7 @@ import {
   calculateEffectiveDays,
   calculateEffectiveWeeks,
   getSubjectJP,
+  resolveSemester,
 } from '../../services/jpEngine';
 
 interface TimePlanningManagerProps {
@@ -76,8 +77,8 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   const [academicYear, setAcademicYear] = useState<string>(
     calendar?.academicYear || academicSetting.academicYear || ''
   );
-  const [semester, setSemester] = useState<'1' | '2'>(
-    calendar?.semester?.includes('2') || academicSetting.semester?.includes('2') ? '2' : '1'
+  const [semester, setSemester] = useState<'1' | '2' | null>(
+    resolveSemester(calendar?.semester, academicSetting.semester)
   );
   const [startDate, setStartDate] = useState<string>(calendar?.startDate || '');
   const [endDate, setEndDate] = useState<string>(calendar?.endDate || '');
@@ -138,7 +139,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
         startDate,
         endDate,
         schoolDaysPerWeek,
-        semester,
+        semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : undefined,
         academicYear,
       },
       days
@@ -160,7 +161,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
       schoolDaysPerWeek,
       calendarStatus: effectiveResult.status,
       effectiveDayStatus: effectiveResult.status,
-      semester,
+      semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : undefined,
       academicYear,
       level: academicSetting.level,
       grade: academicSetting.grade,
@@ -215,6 +216,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   const isCalendarConfigComplete =
     Boolean(startDate) &&
     Boolean(endDate) &&
+    Boolean(semester) &&
     (schoolDaysPerWeek === 5 || schoolDaysPerWeek === 6) &&
     effectiveResult.status === 'RESOLVED';
 
@@ -247,7 +249,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
       id: calendar?.id || `cal-${academicSetting.id}`,
       academicSettingId: academicSetting.id,
       academicYear,
-      semester,
+      semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : '',
       startDate,
       endDate,
       schoolDaysPerWeek,
@@ -287,7 +289,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           academicSettingId: academicSetting.id,
           sourceType: isK13Curriculum ? 'KD' : 'ATP_ITEM',
           sourceId: itemId,
-          semester,
+          semester: semester ? (semester === '1' ? '1 (Ganjil)' : '2 (Genap)') : undefined,
           atpItemId: !isK13Curriculum ? itemId : undefined,
           weekNumber: week,
           startWeek: week,
@@ -307,6 +309,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   };
 
   const handleExportKalender = async () => {
+    if (!semester) {
+      alert('Semester belum ditetapkan. Pilih semester sebelum melanjutkan ekspor kalender.');
+      return;
+    }
     if (!startDate || !endDate || !schoolDaysPerWeek) {
       alert('Kalender pendidikan belum lengkap. Lengkapi tanggal mulai, tanggal selesai, dan hari sekolah per pekan sebelum ekspor.');
       return;
@@ -325,7 +331,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           id: calendar?.id || `cal-${academicSetting.id}`,
           academicSettingId: academicSetting.id,
           academicYear,
-          semester,
+          semester: semester === '1' ? '1 (Ganjil)' : '2 (Genap)',
           startDate,
           endDate,
           schoolDaysPerWeek,
@@ -345,6 +351,10 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
   };
 
   const handleExportAlokasi = async () => {
+    if (!semester) {
+      alert('Semester belum ditetapkan. Pilih semester sebelum melanjutkan ekspor alokasi waktu.');
+      return;
+    }
     if (!startDate || !endDate || !schoolDaysPerWeek) {
       alert('Kalender pendidikan belum lengkap. Lengkapi konfigurasi waktu sebelum ekspor alokasi waktu.');
       return;
@@ -364,7 +374,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
           id: calendar?.id || `cal-${academicSetting.id}`,
           academicSettingId: academicSetting.id,
           academicYear,
-          semester,
+          semester: semester === '1' ? '1 (Ganjil)' : '2 (Genap)',
           startDate,
           endDate,
           schoolDaysPerWeek,
@@ -448,7 +458,7 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <span className="font-bold text-amber-950">Status Kalender: Belum Lengkap. </span>
-              Lengkapi tanggal mulai semester, tanggal akhir semester, dan pilihan hari sekolah (5/6 hari) pada formulir di bawah. Sesuai prinsip ketat <em>NO DATA &gt; FAKE DATA</em>, sistem tidak membuat tanggal atau estimasi hari efektif fiktif sampai data definitif disimpan.
+              Lengkapi penetapan semester, tanggal mulai semester, tanggal akhir semester, dan pilihan hari sekolah (5/6 hari) pada formulir di bawah. Sesuai prinsip ketat <em>NO DATA &gt; FAKE DATA</em>, sistem tidak membuat semester, tanggal, atau estimasi hari efektif fiktif sampai data definitif disimpan.
             </div>
           </div>
         )}
@@ -594,15 +604,29 @@ export const TimePlanningManager: React.FC<TimePlanningManagerProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">Semester</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Semester <span className="text-rose-500">*</span>
+                </label>
                 <select
-                  value={semester}
-                  onChange={(e) => setSemester(e.target.value as '1' | '2')}
-                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium"
+                  value={semester ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSemester(val === '1' || val === '2' ? val : null);
+                  }}
+                  className={`w-full text-xs px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white font-medium ${
+                    !semester ? 'border-amber-400 bg-amber-50/40 text-slate-700' : 'border-slate-300'
+                  }`}
                 >
+                  <option value="">-- Pilih Semester --</option>
                   <option value="1">Semester 1 (Ganjil)</option>
                   <option value="2">Semester 2 (Genap)</option>
                 </select>
+                {!semester && (
+                  <p className="text-[10px] text-amber-700 mt-1 flex items-center gap-1 font-medium">
+                    <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                    Semester belum ditetapkan
+                  </p>
+                )}
               </div>
             </div>
 

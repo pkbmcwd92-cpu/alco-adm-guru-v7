@@ -4,6 +4,7 @@ import {
   calculateEffectiveWeeks,
   getSubjectJP,
   normalizeLearningAllocation,
+  resolveSemester,
 } from '../src/services/jpEngine';
 import { createDefaultCalendarForSetting } from '../src/services/storage';
 import { AcademicCalendar, CalendarDay, AcademicSetting } from '../src/types';
@@ -169,9 +170,9 @@ assert(effResIncomplete.status === 'UNRESOLVED', 'Empty dates return UNRESOLVED 
 assert(effResIncomplete.effectiveLearningDays === 0, 'Incomplete calendar yields 0 effective learning days');
 
 // -----------------------------------------------------------------------------
-// 4. Learning Time Allocation Normalization
+// 4. Learning Time Allocation Normalization & Semester Resolution
 // -----------------------------------------------------------------------------
-console.log('\n--- 4. Learning Time Allocation Normalization ---');
+console.log('\n--- 4. Learning Time Allocation Normalization & Semester Resolution ---');
 const rawAlloc = {
   id: 'alloc-1',
   academicSettingId: dummySetting.id,
@@ -185,6 +186,25 @@ const normalized = normalizeLearningAllocation(rawAlloc);
 assert(normalized.allocatedJP === 6, 'normalizeLearningAllocation preserves allocatedJP');
 assert(normalized.sourceId === 'tp-101', 'normalizeLearningAllocation preserves sourceId');
 assert(normalized.startWeek === 1 && normalized.endWeek === 2, 'normalizeLearningAllocation preserves week range');
+assert(normalized.semester === '', 'normalizeLearningAllocation does not fabricate default semester 1 when missing');
+
+// -----------------------------------------------------------------------------
+// 5. Canonical Semester Resolution (Audit No. 7 Micro-Patch)
+// -----------------------------------------------------------------------------
+console.log('\n--- 5. Canonical Semester Resolution ---');
+assert(resolveSemester(null, null) === null, 'calendar semester null + setting semester null -> null');
+assert(resolveSemester(undefined, undefined) === null, 'calendar semester undefined + setting semester undefined -> null');
+assert(resolveSemester('invalid-value', '') === null, 'calendar semester invalid + setting semester empty -> null');
+assert(resolveSemester('1', null) === '1', 'calendar semester 1 -> "1"');
+assert(resolveSemester('2', null) === '2', 'calendar semester 2 -> "2"');
+assert(resolveSemester('Semester 1', null) === '1', 'calendar semester "Semester 1" -> "1"');
+assert(resolveSemester('Semester 2', null) === '2', 'calendar semester "Semester 2" -> "2"');
+assert(resolveSemester('1 (Ganjil)', null) === '1', 'calendar semester "1 (Ganjil)" -> "1"');
+assert(resolveSemester('2 (Genap)', null) === '2', 'calendar semester "2 (Genap)" -> "2"');
+assert(resolveSemester(null, '1 (Ganjil)') === '1', 'setting semester "1 (Ganjil)" -> "1"');
+assert(resolveSemester(null, '2 (Genap)') === '2', 'setting semester "2 (Genap)" -> "2"');
+assert(resolveSemester(null, 'Semester 2') === '2', 'setting semester "Semester 2" -> "2"');
+assert(resolveSemester('2', '1 (Ganjil)') === '2', 'calendar semester takes precedence over setting semester');
 
 console.log('\n===========================================================');
 console.log('🎉 AUDIT NO. 7 REGRESSION TESTS COMPLETED: 100% PASSED');

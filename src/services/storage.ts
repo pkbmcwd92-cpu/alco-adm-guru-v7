@@ -64,7 +64,7 @@ export function createDefaultCalendarForSetting(setting: AcademicSetting): { cal
     id: calId,
     academicSettingId: setting.id,
     academicYear: setting.academicYear || '',
-    semester: setting.semester || '1',
+    semester: setting.semester || '',
     startDate: '',
     endDate: '',
     schoolDaysPerWeek: null,
@@ -86,7 +86,7 @@ export function generateWorkspaceName(setting: {
 }): string {
   const mapel = setting.subject || 'Mata Pelajaran';
   const kelas = setting.grade || 'Kelas';
-  const sem = setting.semester?.startsWith('1') ? 'Sem 1' : setting.semester?.startsWith('2') ? 'Sem 2' : 'Sem 1';
+  const sem = setting.semester?.includes('2') ? 'Sem 2' : setting.semester?.includes('1') ? 'Sem 1' : 'Sem -';
   const thn = setting.academicYear || '2026/2027';
   return `${mapel} — ${kelas} — ${sem} — ${thn}`;
 }
