@@ -117,12 +117,12 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
   const [newAlokasiJp, setNewAlokasiJp] = useState(4);
   const [newPenilaian, setNewPenilaian] = useState('Tes Tertulis & Kinerja');
 
-  // New KKM Item state
+  // New KKM Item state - NO fabricated 75 defaults (NO DATA > FAKE DATA)
   const [newKkmKd, setNewKkmKd] = useState('');
   const [newKkmIndikator, setNewKkmIndikator] = useState('');
-  const [newKompleksitas, setNewKompleksitas] = useState(75);
-  const [newDayaDukung, setNewDayaDukung] = useState(78);
-  const [newIntake, setNewIntake] = useState(74);
+  const [newKompleksitas, setNewKompleksitas] = useState<number | null>(null);
+  const [newDayaDukung, setNewDayaDukung] = useState<number | null>(null);
+  const [newIntake, setNewIntake] = useState<number | null>(null);
 
   const [notification, setNotification] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState<string | null>(null);
@@ -131,7 +131,7 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
   const totalKKM =
     kkmItems.length > 0
       ? Math.round(kkmItems.reduce((acc, curr) => acc + curr.kkmIndikator, 0) / kkmItems.length)
-      : 75;
+      : undefined;
 
   const handleAddAnalysis = () => {
     if (!newKd.trim()) return;
@@ -190,6 +190,18 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
 
   const handleAddKKM = () => {
     if (!newKkmKd.trim()) return;
+    if (
+      newKompleksitas === null ||
+      newDayaDukung === null ||
+      newIntake === null ||
+      isNaN(newKompleksitas) ||
+      isNaN(newDayaDukung) ||
+      isNaN(newIntake)
+    ) {
+      setNotification('Lengkapi kompleksitas, daya dukung, dan intake sebelum menambahkan KKM.');
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
     const kkmVal = Math.round((newKompleksitas + newDayaDukung + newIntake) / 3);
     const newItem: K13KKMItem = {
       id: `kkm-${Date.now()}`,
@@ -212,6 +224,9 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
     });
     setNewKkmKd('');
     setNewKkmIndikator('');
+    setNewKompleksitas(null);
+    setNewDayaDukung(null);
+    setNewIntake(null);
     setNotification('Butir KKM berhasil ditambahkan!');
     setTimeout(() => setNotification(null), 3000);
   };
@@ -222,7 +237,7 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
     const newTotal =
       updated.length > 0
         ? Math.round(updated.reduce((a, b) => a + b.kkmIndikator, 0) / updated.length)
-        : 75;
+        : undefined;
     onSaveKKM({
       id: k13KKM?.id || `k13-kkm-${Date.now()}`,
       academicSettingId: academicSetting.id,
@@ -363,7 +378,7 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
                   : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              Penetapan KKM (KKM Mapel: {totalKKM})
+              Penetapan KKM (KKM Mapel: {totalKKM != null ? totalKKM : '-'})
             </button>
           </div>
         )}
@@ -610,8 +625,16 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
                   type="number"
                   min="0"
                   max="100"
-                  value={newKompleksitas}
-                  onChange={(e) => setNewKompleksitas(Number(e.target.value))}
+                  placeholder="Belum diisi"
+                  value={newKompleksitas !== null ? newKompleksitas : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') setNewKompleksitas(null);
+                    else {
+                      const n = Number(val);
+                      setNewKompleksitas(isNaN(n) ? null : n);
+                    }
+                  }}
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg bg-white"
                 />
               </div>
@@ -624,8 +647,16 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
                   type="number"
                   min="0"
                   max="100"
-                  value={newDayaDukung}
-                  onChange={(e) => setNewDayaDukung(Number(e.target.value))}
+                  placeholder="Belum diisi"
+                  value={newDayaDukung !== null ? newDayaDukung : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') setNewDayaDukung(null);
+                    else {
+                      const n = Number(val);
+                      setNewDayaDukung(isNaN(n) ? null : n);
+                    }
+                  }}
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg bg-white"
                 />
               </div>
@@ -638,8 +669,16 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
                   type="number"
                   min="0"
                   max="100"
-                  value={newIntake}
-                  onChange={(e) => setNewIntake(Number(e.target.value))}
+                  placeholder="Belum diisi"
+                  value={newIntake !== null ? newIntake : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') setNewIntake(null);
+                    else {
+                      const n = Number(val);
+                      setNewIntake(isNaN(n) ? null : n);
+                    }
+                  }}
                   className="w-full text-xs px-2.5 py-2 border border-slate-300 rounded-lg bg-white"
                 />
               </div>
@@ -648,7 +687,7 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
                 <button
                   type="button"
                   onClick={handleAddKKM}
-                  disabled={!newKkmKd.trim()}
+                  disabled={!newKkmKd.trim() || newKompleksitas === null || newDayaDukung === null || newIntake === null}
                   className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer"
                 >
                   <Calculator className="w-4 h-4" /> Hitung & Tambah
@@ -662,7 +701,7 @@ export const K13Manager: React.FC<K13ManagerProps> = ({
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-slate-800 text-sm">Rincian Perhitungan KKM per Indikator</h3>
               <div className="bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-800">
-                KKM Total Mapel: {totalKKM}
+                KKM Total Mapel: {totalKKM != null ? totalKKM : '-'}
               </div>
             </div>
 

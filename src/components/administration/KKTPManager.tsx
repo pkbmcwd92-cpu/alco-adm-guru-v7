@@ -26,7 +26,7 @@ import {
 } from '../../types';
 import { generateKKTP, generatePenetapanKKM } from '../../services/documentEngine';
 import { isK13 } from '../../services/curriculumRouter';
-import { validateKKTPCriterion } from '../../services/cpWorkflowService';
+import { validateKKTPCriterion, calculateLegacyKKM, isValidKkmAspect } from '../../services/cpWorkflowService';
 
 interface KKTPManagerProps {
   school: SchoolData;
@@ -84,24 +84,54 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
   const [indicators, setIndicators] = useState<string[]>(activeCriterion?.indicators || []);
   const [levels, setLevels] = useState<KKTPLevel[]>(activeCriterion?.levels || []);
 
-  // Legacy KKM sub-state
-  const [kompleksitas, setKompleksitas] = useState(75);
-  const [dayaDukung, setDayaDukung] = useState(75);
-  const [intake, setIntake] = useState(75);
+  // Legacy KKM sub-state - strictly no fabricated 75 default (NO DATA > FAKE DATA)
+  const initialKkmItem = k13KKM?.items?.find((k) => k.id === (activeItem?.id || targetItems[0]?.id));
+  const [kompleksitas, setKompleksitas] = useState<number | null>(
+    activeCriterion?.kompleksitas ?? (typeof initialKkmItem?.kompleksitas === 'number' ? initialKkmItem.kompleksitas : null)
+  );
+  const [dayaDukung, setDayaDukung] = useState<number | null>(
+    activeCriterion?.dayaDukung ?? (typeof initialKkmItem?.dayaDukung === 'number' ? initialKkmItem.dayaDukung : null)
+  );
+  const [intake, setIntake] = useState<number | null>(
+    activeCriterion?.intake ?? (typeof initialKkmItem?.intake === 'number' ? initialKkmItem.intake : null)
+  );
 
   const handleSelectItem = (id: string) => {
     setSelectedItemId(id);
     const found = criteriaList.find((c) => c.tpId === id);
+    const kkmMatch = k13KKM?.items?.find((k) => k.id === id);
     if (found) {
       setApproach(found.approach);
       setIndicators(found.indicators || []);
       setLevels(found.levels || []);
+      if (found.kompleksitas !== undefined || found.dayaDukung !== undefined || found.intake !== undefined) {
+        setKompleksitas(found.kompleksitas ?? null);
+        setDayaDukung(found.dayaDukung ?? null);
+        setIntake(found.intake ?? null);
+      } else {
+        setKompleksitas(typeof kkmMatch?.kompleksitas === 'number' ? kkmMatch.kompleksitas : null);
+        setDayaDukung(typeof kkmMatch?.dayaDukung === 'number' ? kkmMatch.dayaDukung : null);
+        setIntake(typeof kkmMatch?.intake === 'number' ? kkmMatch.intake : null);
+      }
     } else {
       // Empty state is valid: Guru menentukan kriteria manual atau meminta rekomendasi AI
       setIndicators([]);
       setLevels([]);
+      setKompleksitas(typeof kkmMatch?.kompleksitas === 'number' ? kkmMatch.kompleksitas : null);
+      setDayaDukung(typeof kkmMatch?.dayaDukung === 'number' ? kkmMatch.dayaDukung : null);
+      setIntake(typeof kkmMatch?.intake === 'number' ? kkmMatch.intake : null);
     }
   };
+
+  // KKM computation strictly adheres to: NO DATA > FAKE DATA
+  const hasCompleteKkmInputs =
+    isValidKkmAspect(kompleksitas) &&
+    isValidKkmAspect(dayaDukung) &&
+    isValidKkmAspect(intake);
+
+  const calculatedKkm = hasCompleteKkmInputs
+    ? calculateLegacyKKM(kompleksitas, dayaDukung, intake)
+    : null;
 
   const handleGenerateAI = () => {
     if (!activeItem) return;
@@ -140,7 +170,6 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
     setLevels(aiLevels);
 
     // Create DRAFT recommendation criterion
-    const calculatedKkm = Math.round((kompleksitas + dayaDukung + intake) / 3);
     const candidateCriterion: AssessmentCriterion = {
       id: activeCriterion?.id || `criterion-${Date.now()}-${activeItem.id}`,
       academicSettingId: academicSetting.id,
@@ -148,6 +177,9 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
       description: `Kriteria Ketercapaian: ${activeItem.statement}`,
       approach,
       passingThreshold: approach === 'legacy_kkm' ? calculatedKkm : null,
+      kompleksitas: approach === 'legacy_kkm' ? kompleksitas : undefined,
+      dayaDukung: approach === 'legacy_kkm' ? dayaDukung : undefined,
+      intake: approach === 'legacy_kkm' ? intake : undefined,
       indicators: aiIndicators,
       levels: aiLevels,
       basedOnTpUpdatedAt: tp?.updatedAt,
@@ -170,7 +202,16 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
 
   const handleSaveCurrent = () => {
     if (!activeItem) return;
-    const calculatedKkm = Math.round((kompleksitas + dayaDukung + intake) / 3);
+
+    if (approach === 'legacy_kkm' && !hasCompleteKkmInputs) {
+      setNotification({
+        message: 'Lengkapi kompleksitas, daya dukung, dan intake sebelum menyimpan KKM.',
+        type: 'warning',
+      });
+      setTimeout(() => setNotification(null), 4000);
+      return;
+    }
+
     const currentGenBy =
       activeCriterion?.generatedBy === 'AI' ? 'AI_EDITED_BY_TEACHER' : activeCriterion?.generatedBy || 'TEACHER';
 
@@ -181,6 +222,9 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
       description: `Kriteria Ketercapaian: ${activeItem.statement}`,
       approach,
       passingThreshold: approach === 'legacy_kkm' ? calculatedKkm : null,
+      kompleksitas: approach === 'legacy_kkm' ? kompleksitas : undefined,
+      dayaDukung: approach === 'legacy_kkm' ? dayaDukung : undefined,
+      intake: approach === 'legacy_kkm' ? intake : undefined,
       indicators,
       levels,
       basedOnTpUpdatedAt: activeCriterion?.basedOnTpUpdatedAt || tp?.updatedAt,
@@ -194,8 +238,8 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
     setCriteriaList(updated);
     onSaveCriteria(updated);
 
-    // If K13 and Legacy KKM approach is selected, also sync to K13KKM state
-    if (isK13Curriculum && approach === 'legacy_kkm' && onSaveK13KKM) {
+    // If K13 and Legacy KKM approach is selected with complete inputs, sync to K13KKM state
+    if (isK13Curriculum && approach === 'legacy_kkm' && onSaveK13KKM && calculatedKkm !== null) {
       const existingKkmItems = k13KKM?.items || [];
       const updatedKkmItems = existingKkmItems
         .filter((k) => k.id !== activeItem.id)
@@ -203,9 +247,9 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
           id: activeItem.id,
           kd: activeItem.statement,
           indikator: indicators[0] || 'Indikator Ketercapaian KD',
-          kompleksitas,
-          dayaDukung,
-          intake,
+          kompleksitas: kompleksitas!,
+          dayaDukung: dayaDukung!,
+          intake: intake!,
           kkmIndikator: calculatedKkm,
         });
       const newTotal = Math.round(
@@ -229,7 +273,6 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
 
   const handleConfirmCurrent = () => {
     if (!activeItem) return;
-    const calculatedKkm = Math.round((kompleksitas + dayaDukung + intake) / 3);
     const currentGenBy =
       activeCriterion?.generatedBy === 'AI' ? 'AI_EDITED_BY_TEACHER' : activeCriterion?.generatedBy || 'TEACHER';
 
@@ -240,6 +283,9 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
       description: `Kriteria Ketercapaian: ${activeItem.statement}`,
       approach,
       passingThreshold: approach === 'legacy_kkm' ? calculatedKkm : null,
+      kompleksitas: approach === 'legacy_kkm' ? kompleksitas : undefined,
+      dayaDukung: approach === 'legacy_kkm' ? dayaDukung : undefined,
+      intake: approach === 'legacy_kkm' ? intake : undefined,
       indicators,
       levels,
       basedOnTpUpdatedAt: tp?.updatedAt,
@@ -740,16 +786,31 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
 
               {approach === 'legacy_kkm' && isK13Curriculum && (
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                    Perhitungan KKM Kurikulum 2013 Berdasarkan Unsur Penilaian Sekolah
-                  </h4>
+                  <div className="flex flex-wrap justify-between items-center gap-2">
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Perhitungan KKM Kurikulum 2013 Berdasarkan Unsur Penilaian Sekolah
+                    </h4>
+                    {!hasCompleteKkmInputs && (
+                      <span className="text-[11px] text-amber-700 font-medium bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Input KKM belum lengkap
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">Kompleksitas (1-100)</label>
                       <input
                         type="number"
-                        value={kompleksitas}
-                        onChange={(e) => setKompleksitas(Number(e.target.value) || 0)}
+                        value={kompleksitas !== null ? kompleksitas : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') setKompleksitas(null);
+                          else {
+                            const n = Number(val);
+                            setKompleksitas(isNaN(n) ? null : n);
+                          }
+                        }}
+                        placeholder="Belum diisi"
                         min={0}
                         max={100}
                         className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
@@ -759,8 +820,16 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">Daya Dukung (1-100)</label>
                       <input
                         type="number"
-                        value={dayaDukung}
-                        onChange={(e) => setDayaDukung(Number(e.target.value) || 0)}
+                        value={dayaDukung !== null ? dayaDukung : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') setDayaDukung(null);
+                          else {
+                            const n = Number(val);
+                            setDayaDukung(isNaN(n) ? null : n);
+                          }
+                        }}
+                        placeholder="Belum diisi"
                         min={0}
                         max={100}
                         className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
@@ -770,8 +839,16 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
                       <label className="block text-[11px] font-medium text-slate-600 mb-1">Intake Siswa (1-100)</label>
                       <input
                         type="number"
-                        value={intake}
-                        onChange={(e) => setIntake(Number(e.target.value) || 0)}
+                        value={intake !== null ? intake : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') setIntake(null);
+                          else {
+                            const n = Number(val);
+                            setIntake(isNaN(n) ? null : n);
+                          }
+                        }}
+                        placeholder="Belum diisi"
                         min={0}
                         max={100}
                         className="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded bg-white"
@@ -780,7 +857,7 @@ export const KKTPManager: React.FC<KKTPManagerProps> = ({
                     <div className="bg-indigo-50 border border-indigo-200 p-2.5 rounded-lg flex flex-col justify-center items-center">
                       <span className="text-[10px] uppercase font-bold text-indigo-700">Hasil KKM</span>
                       <span className="text-base font-bold text-indigo-950">
-                        {Math.round((kompleksitas + dayaDukung + intake) / 3)}
+                        {calculatedKkm !== null ? calculatedKkm : '-'}
                       </span>
                     </div>
                   </div>

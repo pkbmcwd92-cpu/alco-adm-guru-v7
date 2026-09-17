@@ -864,10 +864,10 @@ export async function generatePdfDocument(
             idx + 1,
             it.kd || `KD 3.${idx + 1}`,
             it.indikator || '-',
-            `${it.kompleksitas || 75}%`,
-            `${it.dayaDukung || 80}%`,
-            `${it.intake || 75}%`,
-            `${it.kkmIndikator || 77}%`,
+            it.kompleksitas != null ? `${it.kompleksitas}%` : '-',
+            it.dayaDukung != null ? `${it.dayaDukung}%` : '-',
+            it.intake != null ? `${it.intake}%` : '-',
+            it.kkmIndikator != null ? `${it.kkmIndikator}%` : '-',
           ]);
 
       sections.push({

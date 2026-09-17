@@ -747,6 +747,34 @@ export function resolveCriterionTPReference(
 }
 
 /**
+ * Validates a single KKM aspect score (kompleksitas, dayaDukung, intake).
+ * Must be a finite number within the standard 0 to 100 range.
+ */
+export function isValidKkmAspect(val: unknown): val is number {
+  return typeof val === 'number' && !isNaN(val) && val >= 0 && val <= 100;
+}
+
+/**
+ * Calculates legacy KKM from 3 input aspects: kompleksitas, dayaDukung, and intake.
+ * Returns null if any input is missing, null, undefined, NaN, or outside 0-100 range.
+ * Strictly adheres to the principle: NO DATA > FAKE DATA.
+ */
+export function calculateLegacyKKM(
+  kompleksitas: number | null | undefined,
+  dayaDukung: number | null | undefined,
+  intake: number | null | undefined
+): number | null {
+  if (
+    !isValidKkmAspect(kompleksitas) ||
+    !isValidKkmAspect(dayaDukung) ||
+    !isValidKkmAspect(intake)
+  ) {
+    return null;
+  }
+  return Math.round((kompleksitas + dayaDukung + intake) / 3);
+}
+
+/**
  * Validates a single AssessmentCriterion against canonical TP and workflow rules.
  */
 export function validateKKTPCriterion(
@@ -808,7 +836,26 @@ export function validateKKTPCriterion(
       }
     }
   } else if (criterion.approach === 'legacy_kkm') {
-    if (criterion.passingThreshold === undefined || criterion.passingThreshold === null || isNaN(criterion.passingThreshold)) {
+    const hasAspects =
+      criterion.kompleksitas !== undefined ||
+      criterion.dayaDukung !== undefined ||
+      criterion.intake !== undefined;
+
+    if (hasAspects) {
+      if (
+        !isValidKkmAspect(criterion.kompleksitas) ||
+        !isValidKkmAspect(criterion.dayaDukung) ||
+        !isValidKkmAspect(criterion.intake)
+      ) {
+        issues.push('Unsur KKM (kompleksitas, daya dukung, intake) belum lengkap atau tidak valid.');
+      }
+    }
+
+    if (
+      criterion.passingThreshold === undefined ||
+      criterion.passingThreshold === null ||
+      isNaN(criterion.passingThreshold)
+    ) {
       issues.push('Nilai KKM belum dihitung atau ditentukan.');
     }
   }

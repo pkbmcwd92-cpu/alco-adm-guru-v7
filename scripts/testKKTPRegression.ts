@@ -14,6 +14,8 @@ import {
   resolveCriterionTPReference,
   validateKKTPCriterion,
   validateKKTPData,
+  calculateLegacyKKM,
+  isValidKkmAspect,
 } from '../src/services/cpWorkflowService';
 import {
   AssessmentCriterion,
@@ -258,6 +260,103 @@ if (!valKkmNo.isValid && valKkmNo.issues.some((i) => i.includes('KKM belum dihit
   console.log('✅ legacy_kkm without passingThreshold correctly rejected');
 } else {
   console.error('❌ legacy_kkm without score was not rejected:', valKkmNo);
+  process.exit(1);
+}
+
+// Test 2d: Legacy KKM with null inputs (NO DATA > FAKE DATA)
+const kkmNullCalc = calculateLegacyKKM(null, null, null);
+if (kkmNullCalc === null) {
+  console.log('✅ calculateLegacyKKM(null, null, null) returns null');
+} else {
+  console.error('❌ calculateLegacyKKM(null, null, null) returned:', kkmNullCalc);
+  process.exit(1);
+}
+
+const legacyKKMCritNull: AssessmentCriterion = {
+  id: 'crit-kkm-null',
+  academicSettingId: 'acad-1',
+  tpId: 'tp-101',
+  description: 'KKM with null inputs',
+  approach: 'legacy_kkm',
+  kompleksitas: null,
+  dayaDukung: null,
+  intake: null,
+  passingThreshold: kkmNullCalc,
+  indicators: [],
+  levels: [],
+  workflowStatus: 'SIAP',
+  updatedAt: new Date().toISOString(),
+};
+const valKkmNull = validateKKTPCriterion(legacyKKMCritNull, canonicalTPs);
+if (!valKkmNull.isValid && valKkmNull.status !== 'SIAP' && valKkmNull.status === 'PERLU_DILENGKAPI') {
+  console.log('✅ legacy_kkm with null inputs -> status ≠ SIAP (PERLU_DILENGKAPI)');
+} else {
+  console.error('❌ legacy_kkm with null inputs incorrectly accepted as SIAP:', valKkmNull);
+  process.exit(1);
+}
+
+// Test 2e: Legacy KKM with partial inputs
+const kkmPartialCalc1 = calculateLegacyKKM(75, null, null);
+const kkmPartialCalc2 = calculateLegacyKKM(75, 80, null);
+if (kkmPartialCalc1 === null && kkmPartialCalc2 === null) {
+  console.log('✅ calculateLegacyKKM with partial inputs returns null');
+} else {
+  console.error('❌ calculateLegacyKKM with partial inputs failed:', { kkmPartialCalc1, kkmPartialCalc2 });
+  process.exit(1);
+}
+
+const legacyKKMCritPartial: AssessmentCriterion = {
+  id: 'crit-kkm-part',
+  academicSettingId: 'acad-1',
+  tpId: 'tp-101',
+  description: 'KKM with partial inputs',
+  approach: 'legacy_kkm',
+  kompleksitas: 75,
+  dayaDukung: 80,
+  intake: null,
+  passingThreshold: kkmPartialCalc2,
+  indicators: [],
+  levels: [],
+  workflowStatus: 'SIAP',
+  updatedAt: new Date().toISOString(),
+};
+const valKkmPartial = validateKKTPCriterion(legacyKKMCritPartial, canonicalTPs);
+if (!valKkmPartial.isValid && valKkmPartial.status !== 'SIAP') {
+  console.log('✅ legacy_kkm with partial inputs -> status ≠ SIAP');
+} else {
+  console.error('❌ legacy_kkm with partial inputs incorrectly accepted:', valKkmPartial);
+  process.exit(1);
+}
+
+// Test 2f: Legacy KKM with complete inputs
+const kkmCompleteCalc = calculateLegacyKKM(70, 80, 75);
+if (kkmCompleteCalc === 75) {
+  console.log('✅ calculateLegacyKKM(70, 80, 75) correctly calculates 75');
+} else {
+  console.error('❌ calculateLegacyKKM(70, 80, 75) failed:', kkmCompleteCalc);
+  process.exit(1);
+}
+
+const legacyKKMCritComplete: AssessmentCriterion = {
+  id: 'crit-kkm-complete',
+  academicSettingId: 'acad-1',
+  tpId: 'tp-101',
+  description: 'KKM with complete inputs',
+  approach: 'legacy_kkm',
+  kompleksitas: 70,
+  dayaDukung: 80,
+  intake: 75,
+  passingThreshold: kkmCompleteCalc,
+  indicators: ['Mampu menyelesaikan latihan dasar'],
+  levels: [],
+  workflowStatus: 'SIAP',
+  updatedAt: new Date().toISOString(),
+};
+const valKkmComplete = validateKKTPCriterion(legacyKKMCritComplete, canonicalTPs);
+if (valKkmComplete.isValid && valKkmComplete.status === 'SIAP') {
+  console.log('✅ legacy_kkm with complete inputs -> isValid = true and status = SIAP');
+} else {
+  console.error('❌ legacy_kkm with complete inputs failed validation:', valKkmComplete);
   process.exit(1);
 }
 

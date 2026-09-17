@@ -494,6 +494,9 @@ export interface AssessmentCriterion {
   indicators: string[];
   levels: KKTPLevel[];
   passingThreshold?: number | null; // Nilai KKM minimum jika pendekatan legacy_kkm, null jika non-legacy
+  kompleksitas?: number | null;
+  dayaDukung?: number | null;
+  intake?: number | null;
   notes?: string;
   sourceTpRevision?: number;
   basedOnTpUpdatedAt?: string;
