@@ -18,25 +18,88 @@ import {
   createIdentityMetadataTable,
   createSignoffBlock,
 } from '../docxStyles';
+import { LearningPlan } from '../../../types';
+import { validateLearningPlan, createEmptyLearningPlan } from '../../learningPlanService';
 
+/**
+ * Pure Canonical Document Renderer for Modul Ajar / RPP.
+ * Strictly adheres to:
+ * - NO DATA > FAKE DATA
+ * - ID > TEXT MATCH
+ * - UNRESOLVED > GUESS
+ * - VALIDATOR > AUTO SIAP
+ * - AI OUTPUT = DRAFT
+ */
 export async function generateModulAjar(context: DocumentGenerationContext): Promise<GeneratedDocumentResult> {
-  const { school, profile, academicSetting, atp, tp, cp } = context;
+  const { school, profile, academicSetting, tp, atp } = context;
+
+  // 1. Resolve canonical LearningPlan
+  let plan: LearningPlan | undefined = undefined;
+  if (context.activeLearningPlanId && context.learningPlans) {
+    plan = context.learningPlans.find((lp) => lp.id === context.activeLearningPlanId);
+  }
+  if (!plan && context.learningPlans && context.learningPlans.length > 0) {
+    // Prefer SIAP plan, otherwise latest plan for this setting
+    plan =
+      context.learningPlans.find((lp) => lp.academicSettingId === academicSetting.id && lp.status === 'SIAP') ||
+      context.learningPlans.find((lp) => lp.academicSettingId === academicSetting.id) ||
+      context.learningPlans[0];
+  }
+
+  // If no plan exists in context, synthesize an unconfirmed empty draft from available TP data
+  if (!plan) {
+    const defaultTpIds = tp?.items ? tp.items.map((t) => t.id) : [];
+    const defaultAtpIds = atp?.items ? atp.items.map((a) => a.id) : [];
+    plan = createEmptyLearningPlan({
+      academicSetting,
+      curriculumType: academicSetting.curriculum?.includes('2013') || academicSetting.curriculum?.includes('K13') ? 'K13' : 'KURIKULUM_MERDEKA',
+      tpIds: defaultTpIds,
+      atpItemIds: defaultAtpIds,
+      context: { tp, atp },
+    });
+  }
+
+  // 2. Validate Plan against active context
+  const validation = validateLearningPlan(plan, {
+    academicSetting,
+    tp,
+    atp,
+    k13Analysis: context.k13Analysis,
+    timeAllocations: context.timeAllocations,
+    assessmentCriteria: context.assessmentCriteria,
+  });
+
+  const isDraft = plan.status !== 'SIAP';
+  const isBlankMode = context.documentMode === 'blank';
 
   const docChildren: (Paragraph | Table)[] = [];
 
-  // Header
+  // Header with Draft indicator if not verified/SIAP
+  const docTitle = isDraft
+    ? `[DRAFT] MODUL AJAR / RPP BERDIFERENSIASI`
+    : `MODUL AJAR / RPP BERDIFERENSIASI`;
+
   docChildren.push(
     ...createDocumentHeader(
-      'MODUL AJAR / RPP BERDIFERENSIASI',
-      `${academicSetting.curriculum} — ${academicSetting.grade} (${academicSetting.phase})`
+      docTitle,
+      `${academicSetting.curriculum || 'Kurikulum Merdeka'} — ${academicSetting.grade} (${academicSetting.phase || '-'})`
     )
   );
+
+  // Time / JP allocation resolution
+  const timeAllocationDisplay =
+    validation.resolvedAllocatedJP !== undefined
+      ? `${validation.resolvedAllocatedJP} Jam Pelajaran (JP)`
+      : typeof plan.allocatedJP === 'number'
+      ? `${plan.allocatedJP} Jam Pelajaran (JP)`
+      : 'Belum Ditetapkan';
 
   // Identity Table
   docChildren.push(
     createIdentityMetadataTable(school, profile, academicSetting, [
-      ['Alokasi Waktu', `: ${atp.totalJP || 24} Jam Pelajaran (JP)`],
-      ['Moda Pembelajaran', ': Tatap Muka (Luring) / Pembelajaran Aktif'],
+      ['Alokasi Waktu', `: ${timeAllocationDisplay}`],
+      ['Status Dokumen', `: ${plan.status} (${plan.sourceType})`],
+      ['Topik / Materi', `: ${plan.topic || plan.title || '-'}`],
     ])
   );
   docChildren.push(new Paragraph({ spacing: { after: 180 } }));
@@ -88,171 +151,127 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
     );
   };
 
-  // Compile TP & P3 items
-  const tpList = tp?.items && tp.items.length > 0
-    ? tp.items.map((t, idx) => `${idx + 1}. [${t.code || 'TP'}] ${t.statement}`).join('\n')
-    : (atp?.items || []).map((a, idx) => `${idx + 1}. [${a.tpCode || 'TP'}] ${a.tpStatement}`).join('\n');
+  // Compile TP list strictly from canonical objectives / resolved TPs
+  let tpListText = '-';
+  if (plan.objectives && plan.objectives.length > 0) {
+    tpListText = plan.objectives
+      .map((obj, idx) => `${idx + 1}. ${obj.code ? `[${obj.code}] ` : ''}${obj.statement}${obj.materialScope ? ` (Materi: ${obj.materialScope})` : ''}`)
+      .join('\n');
+  } else if (validation.resolvedTPs.length > 0) {
+    tpListText = validation.resolvedTPs
+      .map((t, idx) => `${idx + 1}. ${t.code ? `[${t.code}] ` : ''}${t.statement}${t.materialScope ? ` (Materi: ${t.materialScope})` : ''}`)
+      .join('\n');
+  }
 
-  const allP3 = Array.from(
-    new Set(
-      (atp?.items || [])
-        .flatMap((i) => i.p3Dimensions || [])
-        .concat(['Beriman dan Bertakwa', 'Bernalar Kritis', 'Gotong Royong', 'Kreatif', 'Mandiri'])
-    )
-  ).slice(0, 4);
-
-  const materialsList = (atp?.items || [])
-    .map((i) => i.materialScope)
-    .filter(Boolean)
-    .join(', ') || academicSetting.subject;
+  // Compile P3 dimensions
+  const explicitP3 = plan.p3Dimensions && plan.p3Dimensions.length > 0
+    ? plan.p3Dimensions
+    : Array.from(new Set(validation.resolvedTPs.map((t) => t.materialScope).filter(Boolean)));
+  const p3Text = explicitP3.length > 0 ? explicitP3.join(', ') : '-';
 
   // I. INFORMASI UMUM
   addSectionTitle('I. INFORMASI UMUM');
-  addSubSection(
-    'A. Kompetensi Awal',
-    `Peserta didik telah memiliki pemahaman dasar terkait konsep awal materi ${academicSetting.subject} serta mampu berpartisipasi aktif dalam kegiatan pembelajaran interaktif di kelas.`
-  );
-  addSubSection(
-    'B. Profil Pelajar Pancasila',
-    `Selama dan setelah proses pembelajaran, peserta didik diharapkan mengembangkan karakter Profil Pelajar Pancasila: ${allP3.join(', ')}.`
-  );
-  addSubSection(
-    'C. Sarana dan Prasarana',
-    `1. Sumber Belajar: Buku Panduan Guru dan Buku Siswa ${academicSetting.subject} ${academicSetting.curriculum}, Lembar Kerja Peserta Didik (LKPD), video pembelajaran kontekstual.\n2. Media/Alat: Proyektor LCD / Papan Tulis, Laptop, kartu materi / media manipulatif, lingkungan sekolah.`
-  );
-  addSubSection(
-    'D. Target Peserta Didik',
-    `1. Jumlah Peserta Didik: ${context.students?.length || 0} Siswa (${academicSetting.grade}).\n2. Peserta Didik Reguler/Tipikal: Umum, tidak ada kesulitan dalam mencerna dan memahami materi ajar.\n3. Peserta Didik dengan Kesulitan Belajar: Memiliki gaya belajar tertentu atau membutuhkan bimbingan bertahap (scaffolding).\n4. Peserta Didik dengan Pencapaian Tinggi: Mampu mencerna materi dengan cepat dan terampil memecahkan masalah tingkat tinggi (HOTS).`
-  );
-  addSubSection(
-    'E. Model & Pendekatan Pembelajaran',
-    'Pendekatan: Saintifik / Kontekstual (Contextual Teaching and Learning)\nModel Pembelajaran: Problem Based Learning (PBL) / Discovery Learning / Pembelajaran Berdiferensiasi (Konten, Proses, Produk)'
-  );
+  addSubSection('A. Kompetensi Awal', isBlankMode ? '........................................................' : (plan.initialCompetency || '-'));
+  addSubSection('B. Profil Pelajar Pancasila', isBlankMode ? '........................................................' : p3Text);
+
+  // Resources
+  const resourcesText =
+    plan.resources && plan.resources.length > 0
+      ? plan.resources.map((r, i) => `${i + 1}. ${r.title}${r.source ? ` (${r.source})` : ''}`).join('\n')
+      : '-';
+  addSubSection('C. Sarana dan Prasarana', isBlankMode ? '........................................................' : resourcesText);
+
+  // Students count
+  const studentCountText = context.students?.length !== undefined ? `${context.students.length} Siswa` : '-';
+  const targetStudentsFull = `Jumlah Peserta Didik: ${studentCountText}${plan.targetStudents ? `\nTarget/Karakteristik: ${plan.targetStudents}` : ''}`;
+  addSubSection('D. Target Peserta Didik', isBlankMode ? 'Jumlah Siswa: ..........\nKarakteristik: ........................................................' : targetStudentsFull);
+
+  addSubSection('E. Model Pembelajaran', isBlankMode ? '........................................................' : (plan.learningModel || '-'));
 
   // II. KOMPONEN INTI
   addSectionTitle('II. KOMPONEN INTI');
-  addSubSection(
-    'A. Tujuan Pembelajaran (TP)',
-    `Melalui serangkaian kegiatan pembelajaran terstruktur, peserta didik mampu:\n${tpList}`
-  );
-  addSubSection(
-    'B. Pemahaman Bermakna',
-    `Peserta didik memahami bahwa konsep materi ${materialsList} memiliki aplikasi langsung dan kebermanfaatan nyata dalam kehidupan sehari-hari dan penyelesaian masalah sosial/lingkungan.`
-  );
-  addSubSection(
-    'C. Pertanyaan Pemantik',
-    `1. Mengapa materi ${academicSetting.subject} ini penting untuk kita pelajari bersama?\n2. Bagaimana kita dapat menerapkan konsep ini ketika menghadapi tantangan di kehidupan sehari-hari?\n3. Apa yang terjadi jika kita tidak memahami langkah-langkah dalam topik ini dengan benar?`
-  );
+  addSubSection('A. Tujuan Pembelajaran (TP)', isBlankMode ? '........................................................................................................................' : tpListText);
+  addSubSection('B. Pemahaman Bermakna', isBlankMode ? '........................................................................................................................' : (plan.meaningfulUnderstanding || '-'));
 
-  // III. KEGIATAN PEMBELAJARAN BERDIFERENSIASI
-  addSectionTitle('III. KEGIATAN PEMBELAJARAN BERDIFERENSIASI');
+  const triggerQuestionsText =
+    plan.triggerQuestions && plan.triggerQuestions.length > 0
+      ? plan.triggerQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')
+      : '-';
+  addSubSection('C. Pertanyaan Pemantik', isBlankMode ? '........................................................................................................................' : triggerQuestionsText);
 
-  atp.items.forEach((item, idx) => {
-    docChildren.push(
-      new Paragraph({
-        spacing: { before: 100, after: 40 },
-        children: [
-          new TextRun({
-            text: `Pertemuan / Unit ${idx + 1}: ${item.materialScope || `Topik ${idx + 1}`} (${item.jp || 4} JP)`,
-            bold: true,
-            size: 20,
-            font: 'Arial',
-            color: '1E3A8A',
-          }),
-        ],
-      })
-    );
+  // III. KEGIATAN PEMBELAJARAN
+  addSectionTitle('III. KEGIATAN PEMBELAJARAN');
 
-    const pertemuanActivities = [
-      `1. Kegiatan Pendahuluan (15 Menit):
-• Guru menyapa peserta didik dengan salam hangat, berdoa bersama, dan memeriksa kehadiran.
-• Apersepsi: Guru mengaitkan materi pertemuan sebelumnya dengan topik "${item.materialScope || item.tpStatement}".
-• Motivasi: Guru menyampaikan tujuan pembelajaran (${item.tpCode}) dan manfaat mempelajarinya.`,
+  const openingSteps = plan.learningSteps?.opening || [];
+  const coreSteps = plan.learningSteps?.core || [];
+  const closingSteps = plan.learningSteps?.closing || [];
 
-      `2. Kegiatan Inti (70 Menit) — Pembelajaran Berdiferensiasi:
-• Orientasi Masalah: Guru menampilkan stimulus kontekstual (gambar/cerita/video) terkait materi.
-• Diferensiasi Konten: Guru menyediakan bahan ajar dalam beragam format (visual/teks bacaan/media interaktif) sesuai gaya belajar siswa.
-• Diferensiasi Proses: Siswa berkolaborasi dalam kelompok terarah. Guru memberikan bimbingan intensif kepada siswa yang membutuhkan bantuan dan memberikan tantangan eksplorasi kepada siswa berkemampuan tinggi.
-• Diferensiasi Produk: Peserta didik menyajikan hasil diskusi atau pemahaman melalui media pilihan (laporan ringkas/peta pikiran/presentasi lisan).`,
+  const formatStepGroup = (label: string, steps: typeof openingSteps) => {
+    if (isBlankMode) {
+      return `${label}:\n........................................................................................................................`;
+    }
+    if (steps.length === 0) {
+      return `${label}: -`;
+    }
+    return `${label}:\n${steps
+      .map(
+        (s, i) =>
+          `• ${s.title ? `[${s.title}] ` : ''}${s.description}${typeof s.durationMinutes === 'number' && s.durationMinutes > 0 ? ` (${s.durationMinutes} Menit)` : ''}`
+      )
+      .join('\n')}`;
+  };
 
-      `3. Kegiatan Penutup (15 Menit):
-• Guru bersama peserta didik merangkum poin-poin utama materi yang telah dipelajari.
-• Refleksi: Peserta didik menyampaikan apa yang dirasakan dan hal baru yang dipahami.
-• Guru memberikan umpan balik apresiatif dan menyampaikan rencana materi pertemuan berikutnya.
-• Doa penutup dan salam.`,
-    ];
+  addSubSection('A. Kegiatan Pendahuluan', formatStepGroup('Kegiatan Pendahuluan', openingSteps));
+  addSubSection('B. Kegiatan Inti', formatStepGroup('Kegiatan Inti', coreSteps));
+  addSubSection('C. Kegiatan Penutup', formatStepGroup('Kegiatan Penutup', closingSteps));
 
-    pertemuanActivities.forEach((act) => {
-      docChildren.push(
-        new Paragraph({
-          spacing: { after: 80 },
-          children: [
-            new TextRun({
-              text: act,
-              size: 19,
-              font: 'Arial',
-              color: '1E293B',
-            }),
-          ],
-        })
-      );
-    });
-  });
+  if (plan.differentiation) {
+    const diffText = [
+      plan.differentiation.content ? `• Diferensiasi Konten: ${plan.differentiation.content}` : '',
+      plan.differentiation.process ? `• Diferensiasi Proses: ${plan.differentiation.process}` : '',
+      plan.differentiation.product ? `• Diferensiasi Produk: ${plan.differentiation.product}` : '',
+      plan.differentiation.notes ? `• Catatan: ${plan.differentiation.notes}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    if (diffText) {
+      addSubSection('D. Rencana Pembelajaran Berdiferensiasi', diffText);
+    }
+  }
 
   // IV. ASESMEN PEMBELAJARAN
   addSectionTitle('IV. ASESMEN PEMBELAJARAN');
-  addSubSection(
-    'A. Asesmen Diagnostik (Awal Pembelajaran)',
-    'Dilakukan di awal untuk mengetahui kesiapan belajar, pemahaman prasyarat, dan minat peserta didik (melalui tanya jawab lisan / kuis apersepsi singkat).'
-  );
-  addSubSection(
-    'B. Asesmen Formatif (Selama Proses Pembelajaran)',
-    '1. Penilaian Sikap: Observasi keterlibatan, gotong royong, dan kemandirian siswa saat diskusi kelompok.\n2. Penilaian Performa: Lembar kerja siswa (LKPD) dan kemampuan presentasi/komunikasi.'
-  );
-  addSubSection(
-    'C. Asesmen Sumatif (Akhir Lingkup Materi)',
-    'Tes tertulis objektif/uraian atau penugasan proyek terstruktur untuk mengukur ketercapaian Tujuan Pembelajaran secara komprehensif.'
-  );
 
-  // V. PENGAYAAN DAN REMEDIAL
+  const formatAssessmentGroup = (label: string, items?: typeof plan.assessmentPlan.initial) => {
+    if (isBlankMode) return `${label}:\n........................................................................................................................`;
+    if (!items || items.length === 0) return `${label}: -`;
+    return `${label}:\n${items
+      .map(
+        (a, i) =>
+          `• ${a.description || a.method || a.technique || 'Asesmen'}${a.technique ? ` (Teknik: ${a.technique})` : ''}${a.instrument ? ` (Instrumen: ${a.instrument})` : ''}`
+      )
+      .join('\n')}`;
+  };
+
+  addSubSection('A. Asesmen Awal (Diagnostik)', formatAssessmentGroup('Asesmen Awal', plan.assessmentPlan?.initial));
+  addSubSection('B. Asesmen Formatif', formatAssessmentGroup('Asesmen Formatif', plan.assessmentPlan?.formative));
+  addSubSection('C. Asesmen Sumatif', formatAssessmentGroup('Asesmen Sumatif', plan.assessmentPlan?.summative));
+
+  // V. PENGAYAAN DAN REMEDIAL (Planning only)
   addSectionTitle('V. PENGAYAAN DAN REMEDIAL');
-  addSubSection(
-    'A. Pengayaan',
-    'Diberikan kepada peserta didik dengan capaian tinggi berupa studi kasus tambahan, tugas eksplorasi berbasis HOTS, atau menjadi tutor sebaya bagi rekan sekelas.'
-  );
-  addSubSection(
-    'B. Remedial',
-    'Diberikan kepada peserta didik yang belum mencapai Kriteria Ketercapaian Tujuan Pembelajaran (KKTP) berupa bimbingan ulang secara individual/kelompok kecil atau penugasan soal dengan penyederhanaan bertahap.'
-  );
+  addSubSection('A. Rencana Pengayaan', isBlankMode ? '........................................................' : (plan.enrichmentPlan || '-'));
+  addSubSection('B. Rencana Remedial', isBlankMode ? '........................................................' : (plan.remedialPlan || '-'));
 
   // VI. REFLEKSI
-  addSectionTitle('VI. REFLEKSI GURU DAN PESERTA DIDIK');
-  addSubSection(
-    'A. Refleksi Guru',
-    '1. Apakah alokasi waktu kegiatan pembelajaran sudah efektif dan sesuai rancangan?\n2. Apakah seluruh peserta didik terlibat aktif dalam proses pembelajaran berdiferensiasi?\n3. Bagian kegiatan mana yang memerlukan penyesuaian untuk pertemuan mendatang?'
-  );
-  addSubSection(
-    'B. Refleksi Peserta Didik',
-    '1. Bagian materi mana yang paling menarik dan kamu sukai pada pertemuan ini?\n2. Hal apa yang masih terasa menantang atau belum kamu pahami sepenuhnya?\n3. Apa yang akan kamu lakukan untuk meningkatkan pemahamanmu pada materi selanjutnya?'
-  );
-
-  // VII. LAMPIRAN
-  addSectionTitle('VII. LAMPIRAN');
-  addSubSection(
-    'A. Lembar Kerja Peserta Didik (LKPD)',
-    `LKPD terlampir pada modul ini, berisi panduan aktivitas diskusi kelompok, studi kasus terbimbing, dan rubrik penilaian kerja mandiri untuk materi ${materialsList}.`
-  );
-  addSubSection(
-    'B. Glosarium',
-    atp.items
-      .map((i) => (i.glossary ? `• ${i.glossary}` : ''))
-      .filter(Boolean)
-      .join('\n') || `• ${academicSetting.subject}: Bidang ilmu terstruktur yang dipelajari pada fase ini.`
-  );
-  addSubSection(
-    'C. Daftar Pustaka',
-    `1. Kementerian Pendidikan, Kebudayaan, Riset, dan Teknologi RI. Buku Panduan Guru & Siswa ${academicSetting.subject} ${academicSetting.grade} ${academicSetting.curriculum}. Jakarta: Pusat Kurikulum dan Perbukuan.\n2. Badan Standar, Kurikulum, dan Asesmen Pendidikan (BSKAP). Panduan Pembelajaran dan Asesmen Kurikulum Merdeka.`
-  );
+  if (plan.reflection?.teacherReflection || plan.reflection?.studentReflection || isBlankMode) {
+    addSectionTitle('VI. REFLEKSI');
+    if (plan.reflection?.teacherReflection || isBlankMode) {
+      addSubSection('A. Refleksi Guru', isBlankMode ? '........................................................' : (plan.reflection?.teacherReflection || '-'));
+    }
+    if (plan.reflection?.studentReflection || isBlankMode) {
+      addSubSection('B. Refleksi Peserta Didik', isBlankMode ? '........................................................' : (plan.reflection?.studentReflection || '-'));
+    }
+  }
 
   // Signoff Block
   docChildren.push(...createSignoffBlock(school, profile));
@@ -287,13 +306,13 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
   return {
     success: true,
     type: 'MODUL_AJAR',
-    title: 'Modul Ajar / RPP Berdiferensiasi',
+    title: docTitle,
     fileName,
     blob,
     record: {
       id: `doc-modul-${Date.now()}`,
       type: 'MODUL_AJAR',
-      title: 'Modul Ajar / RPP Berdiferensiasi',
+      title: docTitle,
       status: 'completed',
       lastGenerated: new Date().toISOString(),
       fileName,

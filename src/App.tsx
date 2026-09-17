@@ -11,6 +11,7 @@ import {
   ATPData,
   AdministrationWorkspace,
   AppDocumentRecord,
+  LearningPlan,
 } from './types';
 import {
   getAppData,
@@ -38,6 +39,8 @@ import {
   saveEnrichmentRecords,
   saveK13Analysis,
   saveK13KKM,
+  saveLearningPlan,
+  deleteLearningPlan,
   setActiveProfileId,
   setActiveWorkspaceId,
   createWorkspace,
@@ -104,6 +107,7 @@ export function App() {
     enrichments = [],
     k13Analysis,
     k13KKM,
+    learningPlans = [],
     allWorkspaces = [],
     allWorkspacesForProfile = [],
   } = currentWorkspaceData;
@@ -258,6 +262,16 @@ export function App() {
 
   const handleSaveK13KKM = (kkm: any) => {
     saveK13KKM(kkm);
+    refreshData();
+  };
+
+  const handleSaveLearningPlan = (plan: LearningPlan) => {
+    saveLearningPlan(plan);
+    refreshData();
+  };
+
+  const handleDeleteLearningPlan = (planId: string) => {
+    deleteLearningPlan(planId);
     refreshData();
   };
 
@@ -465,6 +479,7 @@ export function App() {
               enrichments={enrichments || []}
               k13Analysis={k13Analysis}
               k13KKM={k13KKM}
+              learningPlans={learningPlans || []}
               onSaveCalendar={handleSaveCalendar}
               onSaveTimeAllocations={handleSaveTimeAllocations}
               onSaveStudents={handleSaveStudents}
@@ -476,6 +491,8 @@ export function App() {
               onSaveEnrichments={handleSaveEnrichments}
               onSaveK13Analysis={handleSaveK13Analysis}
               onSaveK13KKM={handleSaveK13KKM}
+              onSaveLearningPlan={handleSaveLearningPlan}
+              onDeleteLearningPlan={handleDeleteLearningPlan}
               onBackToStep={(step) => setCurrentStep(step)}
               onUpdateDocuments={(updatedDocs) => {
                 saveDocuments(updatedDocs);

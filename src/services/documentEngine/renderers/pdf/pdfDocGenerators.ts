@@ -342,9 +342,30 @@ export async function generatePdfDocument(
     }
 
     case 'MODUL_AJAR': {
-      title = 'Modul Ajar / RPP Berdiferensiasi';
-      subTitle = `${subject} — ${grade} (${academicSetting?.phase || 'Fase A'}) — Semester ${semester}`;
+      // Resolve canonical LearningPlan
+      const matchedPlan =
+        (context.learningPlans || []).find((lp) => lp.id === context.activeLearningPlanId) ||
+        (context.learningPlans || []).find((lp) => lp.academicSettingId === academicSetting?.id && lp.status === 'SIAP') ||
+        (context.learningPlans || []).find((lp) => lp.academicSettingId === academicSetting?.id) ||
+        (context.learningPlans || [])[0];
+
+      const isDraftPlan = !matchedPlan || matchedPlan.status !== 'SIAP';
+      title = isDraftPlan ? '[DRAFT] Modul Ajar / RPP Berdiferensiasi' : 'Modul Ajar / RPP Berdiferensiasi';
+      subTitle = `${subject} — ${grade} (${academicSetting?.phase || '-'}) — Semester ${semester}`;
       fileName = `Modul_Ajar_${cleanSubject}_${cleanGrade}.pdf`;
+
+      // Compile TP string
+      const tpStatements = matchedPlan?.objectives && matchedPlan.objectives.length > 0
+        ? matchedPlan.objectives.map((o, idx) => `${idx + 1}. ${o.code ? `[${o.code}] ` : ''}${o.statement}`).join('\n')
+        : (tp?.items || []).map((t, idx) => `${idx + 1}. [${t.code || `TP ${idx + 1}`}] ${t.statement}`).join('\n') || '-';
+
+      const p3Str = matchedPlan?.p3Dimensions && matchedPlan.p3Dimensions.length > 0
+        ? matchedPlan.p3Dimensions.join(', ')
+        : '-';
+
+      const resourcesStr = matchedPlan?.resources && matchedPlan.resources.length > 0
+        ? matchedPlan.resources.map((r, i) => `${i + 1}. ${r.title}`).join('\n')
+        : '-';
 
       sections.push({
         type: 'heading',
@@ -354,8 +375,8 @@ export async function generatePdfDocument(
       sections.push({
         type: 'paragraph',
         text: isBlankMode
-          ? 'Target Peserta Didik: ........................................................\nJumlah Peserta Didik: .......... siswa.\nModel Pembelajaran: ........................................................\nSarana & Prasarana: ........................................................'
-          : `Target Peserta Didik: Peserta didik reguler/tipikal.\nJumlah Peserta Didik: ${students?.length || 28} siswa.\nModel Pembelajaran: Tatap muka, Problem-Based Learning (PBL) & Project-Based Learning (PjBL).\nSarana & Prasarana: Buku Panduan Guru & Siswa, LKPD, LCD Proyektor, Alat Peraga Kontekstual.`,
+          ? 'Kompetensi Awal: ........................................................\nProfil Pancasila: ........................................................\nTarget Siswa: ........................................................\nJumlah Siswa: ..........\nModel Pembelajaran: ........................................................\nSarana & Prasarana: ........................................................'
+          : `Status Rencana: ${matchedPlan ? `${matchedPlan.status} (${matchedPlan.sourceType})` : 'DRAFT'}\nKompetensi Awal: ${matchedPlan?.initialCompetency || '-'}\nProfil Pelajar Pancasila: ${p3Str}\nTarget Peserta Didik: ${matchedPlan?.targetStudents || '-'}\nJumlah Peserta Didik: ${students?.length !== undefined ? `${students.length} Siswa` : '-'}\nModel Pembelajaran: ${matchedPlan?.learningModel || '-'}\nSarana & Prasarana: ${resourcesStr}`,
       });
 
       sections.push({
@@ -367,20 +388,43 @@ export async function generatePdfDocument(
         type: 'paragraph',
         text: isBlankMode
           ? 'Tujuan Pembelajaran: ........................................................................................................................................................\n\nPemahaman Bermakna: ........................................................................................................................................................\n\nPertanyaan Pemantik: ........................................................................................................................................................'
-          : `Tujuan Pembelajaran: ${tp?.items[0]?.statement || 'Peserta didik memahami materi dan menerapkan dalam kehidupan sehari-hari.'}\n\nPemahaman Bermakna: Pembelajaran bermakna yang menghubungkan konsep materi dengan pengalaman konkret siswa di lingkungan sekitar.\n\nPertanyaan Pemantik: Bagaimana kita dapat memanfaatkan pemahaman ini untuk memecahkan persoalan nyata?`,
+          : `Tujuan Pembelajaran:\n${tpStatements}\n\nPemahaman Bermakna:\n${matchedPlan?.meaningfulUnderstanding || '-'}\n\nPertanyaan Pemantik:\n${matchedPlan?.triggerQuestions && matchedPlan.triggerQuestions.length > 0 ? matchedPlan.triggerQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n') : '-'}`,
       });
 
       sections.push({
         type: 'heading',
-        text: 'III. KEGIATAN PEMBELAJARAN BERDIFERENSIASI',
+        text: 'III. KEGIATAN PEMBELAJARAN',
         level: 1,
       });
+
+      const openingStr = (matchedPlan?.learningSteps?.opening || []).map((s) => `• ${s.description}${s.durationMinutes ? ` (${s.durationMinutes} Menit)` : ''}`).join('\n') || '-';
+      const coreStr = (matchedPlan?.learningSteps?.core || []).map((s) => `• ${s.description}${s.durationMinutes ? ` (${s.durationMinutes} Menit)` : ''}`).join('\n') || '-';
+      const closingStr = (matchedPlan?.learningSteps?.closing || []).map((s) => `• ${s.description}${s.durationMinutes ? ` (${s.durationMinutes} Menit)` : ''}`).join('\n') || '-';
+
       sections.push({
         type: 'paragraph',
         text: isBlankMode
           ? '1. Kegiatan Pendahuluan: ........................................................................................................................................................\n2. Kegiatan Inti: ........................................................................................................................................................\n3. Kegiatan Penutup: ........................................................................................................................................................'
-          : `1. Kegiatan Pendahuluan (10 Menit): Orientasi salam, doa, apersepsi, dan penyampaian tujuan pembelajaran.\n2. Kegiatan Inti (50 Menit): Eksplorasi konsep berdiferensiasi konten & proses, diskusi kelompok, presentasi hasil karya.\n3. Kegiatan Penutup (10 Menit): Refleksi bersama, penguatan kesimpulan, dan tindak lanjut tugas mandiri.`,
+          : `1. Kegiatan Pendahuluan:\n${openingStr}\n\n2. Kegiatan Inti:\n${coreStr}\n\n3. Kegiatan Penutup:\n${closingStr}`,
       });
+
+      if (matchedPlan?.assessmentPlan || isBlankMode) {
+        sections.push({
+          type: 'heading',
+          text: 'IV. RENCANA ASESMEN',
+          level: 1,
+        });
+        const initialAsm = (matchedPlan?.assessmentPlan?.initial || []).map((a) => `• ${a.description || a.technique || 'Asesmen Awal'}`).join('\n') || '-';
+        const formativeAsm = (matchedPlan?.assessmentPlan?.formative || []).map((a) => `• ${a.description || a.technique || 'Asesmen Formatif'}`).join('\n') || '-';
+        const summativeAsm = (matchedPlan?.assessmentPlan?.summative || []).map((a) => `• ${a.description || a.technique || 'Asesmen Sumatif'}`).join('\n') || '-';
+
+        sections.push({
+          type: 'paragraph',
+          text: isBlankMode
+            ? 'Asesmen Awal: ........................................................\nAsesmen Formatif: ........................................................\nAsesmen Sumatif: ........................................................'
+            : `Asesmen Awal:\n${initialAsm}\n\nAsesmen Formatif:\n${formativeAsm}\n\nAsesmen Sumatif:\n${summativeAsm}`,
+        });
+      }
       break;
     }
 

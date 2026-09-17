@@ -45,6 +45,7 @@ import {
   EnrichmentRecord,
   K13Analysis,
   K13KKM,
+  LearningPlan,
   DocumentSnapshot,
   DocumentMode,
   WorkflowStepId,
@@ -91,6 +92,7 @@ interface AdminDocsExportProps {
   enrichments?: EnrichmentRecord[];
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
+  learningPlans?: LearningPlan[];
   onBackToStep: (stepId: WorkflowStepId) => void;
   onUpdateDocuments?: (updatedDocs: AppDocumentRecord[]) => void;
 }
@@ -117,6 +119,7 @@ export const AdminDocsExport: React.FC<AdminDocsExportProps> = ({
   enrichments,
   k13Analysis,
   k13KKM,
+  learningPlans = [],
   onBackToStep,
   onUpdateDocuments,
 }) => {
@@ -175,6 +178,7 @@ export const AdminDocsExport: React.FC<AdminDocsExportProps> = ({
     enrichments,
     k13Analysis,
     k13KKM,
+    learningPlans,
   };
 
   const getDocRecord = (type: DocumentType): AppDocumentRecord | undefined => {
@@ -1333,30 +1337,85 @@ export const AdminDocsExport: React.FC<AdminDocsExportProps> = ({
             )}
 
             {/* 4. MODUL AJAR PREVIEW */}
-            {activePreviewType === 'MODUL_AJAR' && (
-              <div className="space-y-3 text-slate-800">
-                <div className="bg-blue-50/60 p-3 rounded-xl border border-blue-100 space-y-1">
-                  <div className="font-bold text-blue-950 uppercase text-[11px]">I. Informasi Umum & Model Pembelajaran</div>
-                  <div className="text-[11px] text-slate-600 leading-relaxed">
-                    Pendekatan Kontekstual Saintifik, Model Problem Based Learning (PBL) & Pembelajaran Berdiferensiasi (Konten, Proses, Produk).
-                  </div>
-                </div>
+            {activePreviewType === 'MODUL_AJAR' && (() => {
+              const activePlan = (learningPlans && learningPlans.length > 0)
+                ? (learningPlans.find((p) => p.status === 'SIAP') || learningPlans[0])
+                : null;
+              
+              const resolvedTPs = activePlan
+                ? (tp?.items || []).filter((t) => activePlan.tpIds.includes(t.id))
+                : (tp?.items || []);
 
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-                  <div className="font-bold text-slate-900 uppercase text-[11px]">II. Komponen Inti & Pertanyaan Pemantik</div>
-                  <div className="text-[11px] text-slate-600 leading-relaxed">
-                    Tujuan Pembelajaran: {(tp?.items?.length || 0) > 0 ? `${tp?.items?.length} Butir TP terintegrasi` : 'Berdasarkan alur ATP'}. Pemahaman bermakna dan LKPD terlampir.
+              return (
+                <div className="space-y-3 text-slate-800">
+                  <div className="bg-blue-50/60 p-3 rounded-xl border border-blue-100 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-bold text-blue-950 uppercase text-[11px]">I. Informasi Umum & Alokasi Waktu</div>
+                      {activePlan && (
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          activePlan.status === 'SIAP'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {activePlan.status === 'SIAP' ? 'SIAP (Terkonfirmasi)' : `DRAF (${activePlan.status})`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-600 leading-relaxed">
+                      {activePlan?.learningModel
+                        ? `Model: ${activePlan.learningModel}. `
+                        : ''}
+                      Alokasi Waktu:{' '}
+                      <strong>{activePlan?.allocatedJP ? `${activePlan.allocatedJP} JP` : `${atp?.items?.reduce((a, b) => a + (Number(b.jp) || 0), 0) || 0} JP (Total ATP)`}</strong>.
+                      {activePlan?.targetStudents && ` Target: ${activePlan.targetStudents}.`}
+                    </div>
                   </div>
-                </div>
 
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
-                  <div className="font-bold text-slate-900 uppercase text-[11px]">III. Kegiatan Pembelajaran Berdiferensiasi</div>
-                  <div className="text-[11px] text-slate-600 leading-relaxed">
-                    Sintaks: Pendahuluan (15 mnt) → Kegiatan Inti Berdiferensiasi (70 mnt) → Penutup & Refleksi (15 mnt) per pertemuan.
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                    <div className="font-bold text-slate-900 uppercase text-[11px]">II. Tujuan Pembelajaran (Canonical TP)</div>
+                    <div className="text-[11px] text-slate-600 leading-relaxed">
+                      {resolvedTPs.length > 0 ? (
+                        <ul className="list-disc pl-4 space-y-0.5 mt-1">
+                          {resolvedTPs.map((t) => (
+                            <li key={t.id}>
+                              <strong>[{t.code || 'TP'}]</strong> {t.statement}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="italic text-slate-400">Belum ada TP yang dipilih pada rencana pembelajaran ini.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                    <div className="font-bold text-slate-900 uppercase text-[11px]">III. Langkah Kegiatan Pembelajaran</div>
+                    <div className="text-[11px] text-slate-600 leading-relaxed">
+                      {activePlan?.learningSteps ? (
+                        <div className="space-y-1 mt-1">
+                          <div>
+                            <span className="font-semibold">Pendahuluan:</span>{' '}
+                            {activePlan.learningSteps.opening?.map((s) => s.description).join('; ') || '-'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Inti:</span>{' '}
+                            {activePlan.learningSteps.core?.map((s) => s.description).join('; ') || '-'}
+                          </div>
+                          <div>
+                            <span className="font-semibold">Penutup:</span>{' '}
+                            {activePlan.learningSteps.closing?.map((s) => s.description).join('; ') || '-'}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="italic text-slate-400">
+                          Buka tab <strong>Rencana Pembelajaran</strong> untuk menyusun atau mengonfirmasi langkah-langkah kegiatan secara terstruktur.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* 5. ASESMEN PREVIEW */}
             {activePreviewType === 'ASESMEN' && (

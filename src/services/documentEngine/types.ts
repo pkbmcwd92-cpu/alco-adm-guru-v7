@@ -21,6 +21,7 @@ import {
   EnrichmentRecord,
   K13Analysis,
   K13KKM,
+  LearningPlan,
   DocumentMode,
   DocumentSnapshot,
 } from '../../types';
@@ -52,6 +53,8 @@ export interface DocumentGenerationContext {
   enrichments?: EnrichmentRecord[];
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
+  learningPlans?: LearningPlan[];
+  activeLearningPlanId?: string;
 }
 
 export type ZipExportFormat = 'pdf' | 'docx' | 'both';

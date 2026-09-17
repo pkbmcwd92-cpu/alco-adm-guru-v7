@@ -26,9 +26,11 @@ import {
   K13KKM,
   PrincipalHistory,
   CPAnalysisData,
+  LearningPlan,
 } from '../types';
 import { getCurriculumTypeFromSetting, isK13, isMerdeka } from './curriculumRouter';
 import { validateATPReferences, normalizeATPReferences, validateATPDataWorkflow } from './cpWorkflowService';
+import { migrateLegacyLearningPlan } from './learningPlanService';
 import {
   INITIAL_PROFILES,
   INITIAL_SCHOOL,
@@ -211,6 +213,7 @@ export function getInitialState(): AppStorageState {
     enrichmentRecords: [],
     k13Analyses: [],
     k13KKMs: [],
+    learningPlans: [],
   };
 }
 
@@ -325,6 +328,7 @@ export function loadAppStorage(): AppStorageState {
     if (!Array.isArray(parsed.enrichmentRecords)) { parsed.enrichmentRecords = []; needsResave = true; }
     if (!Array.isArray(parsed.k13Analyses)) { parsed.k13Analyses = []; needsResave = true; }
     if (!Array.isArray(parsed.k13KKMs)) { parsed.k13KKMs = []; needsResave = true; }
+    if (!Array.isArray(parsed.learningPlans)) { parsed.learningPlans = []; needsResave = true; }
 
     // Ensure core curriculum data arrays exist and items are sanitized
     if (!Array.isArray(parsed.cps) || parsed.cps.length === 0) {
@@ -424,6 +428,9 @@ function migrateV2ToV3(v2Data: any): AppStorageState {
     enrichmentRecords: Array.isArray(v2Data.enrichmentRecords) ? v2Data.enrichmentRecords : [],
     k13Analyses: Array.isArray(v2Data.k13Analyses) ? v2Data.k13Analyses : [],
     k13KKMs: Array.isArray(v2Data.k13KKMs) ? v2Data.k13KKMs : [],
+    learningPlans: Array.isArray(v2Data.learningPlans)
+      ? v2Data.learningPlans.map((lp: any) => migrateLegacyLearningPlan(lp, lp.academicSettingId || ''))
+      : [],
   };
 }
 
@@ -804,6 +811,7 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
   // Retrieve CP Analysis if exists
   const cpAnalysis = (state.cpAnalyses || []).find((a) => a.academicSettingId === academicSetting!.id);
   const principalHistories = (state.principalHistories || []).filter((h) => h.schoolId === school.id);
+  const learningPlans = (state.learningPlans || []).filter((lp) => lp.academicSettingId === academicSetting!.id);
 
   return {
     profile,
@@ -843,6 +851,7 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
     enrichments,
     k13Analysis,
     k13KKM,
+    learningPlans,
   };
 }
 
@@ -1950,6 +1959,9 @@ export function importAppDataFromJSON(jsonStr: string): boolean {
       enrichmentRecords: data.enrichmentRecords || [],
       k13Analyses: data.k13Analyses || [],
       k13KKMs: data.k13KKMs || [],
+      learningPlans: Array.isArray(data.learningPlans)
+        ? data.learningPlans.map((lp: any) => migrateLegacyLearningPlan(lp, lp.academicSettingId || ''))
+        : [],
     };
     saveAppStorage(state);
     return true;
@@ -1957,6 +1969,34 @@ export function importAppDataFromJSON(jsonStr: string): boolean {
     console.error('Failed to parse import JSON:', err);
     return false;
   }
+}
+
+export function saveLearningPlan(plan: LearningPlan): void {
+  const state = loadAppStorage();
+  if (!state.learningPlans) state.learningPlans = [];
+  const idx = state.learningPlans.findIndex((p) => p.id === plan.id);
+  const updatedPlan: LearningPlan = {
+    ...plan,
+    updatedAt: new Date().toISOString(),
+  };
+  if (idx >= 0) {
+    state.learningPlans[idx] = updatedPlan;
+  } else {
+    state.learningPlans.push(updatedPlan);
+  }
+  saveAppStorage(state);
+}
+
+export function deleteLearningPlan(planId: string): void {
+  const state = loadAppStorage();
+  if (!state.learningPlans) return;
+  state.learningPlans = state.learningPlans.filter((p) => p.id !== planId);
+  saveAppStorage(state);
+}
+
+export function getLearningPlansForSetting(academicSettingId: string): LearningPlan[] {
+  const state = loadAppStorage();
+  return (state.learningPlans || []).filter((p) => p.academicSettingId === academicSettingId);
 }
 
 export function resetToDefaultData(): void {

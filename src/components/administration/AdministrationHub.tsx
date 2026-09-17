@@ -34,17 +34,20 @@ import {
   EnrichmentRecord,
   K13Analysis,
   K13KKM,
+  LearningPlan,
 } from '../../types';
 import { TimePlanningManager } from './TimePlanningManager';
 import { AttendanceManager } from './AttendanceManager';
 import { KKTPManager } from './KKTPManager';
 import { AssessmentGradeManager } from './AssessmentGradeManager';
 import { FollowUpManager } from './FollowUpManager';
+import { LearningPlanManager } from './LearningPlanManager';
 import { AdminDocsExport } from '../AdminDocsExport';
 import { isK13 } from '../../services/curriculumRouter';
 
 export type AdministrationTab =
   | 'time_planning'
+  | 'learning_plan'
   | 'kktp'
   | 'assessment_grades'
   | 'attendance'
@@ -73,6 +76,7 @@ interface AdministrationHubProps {
   enrichments: EnrichmentRecord[];
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
+  learningPlans?: LearningPlan[];
   initialTab?: AdministrationTab;
   onSaveCalendar: (calendar: AcademicCalendar, days: CalendarDay[]) => void;
   onSaveTimeAllocations: (allocations: TimeAllocation[]) => void;
@@ -85,6 +89,8 @@ interface AdministrationHubProps {
   onSaveEnrichments: (records: EnrichmentRecord[]) => void;
   onSaveK13Analysis: (analysis: K13Analysis) => void;
   onSaveK13KKM: (kkm: K13KKM) => void;
+  onSaveLearningPlan?: (plan: LearningPlan) => void;
+  onDeleteLearningPlan?: (planId: string) => void;
   onBackToStep: (stepId: any) => void;
   onUpdateDocuments?: (updatedDocs: AppDocumentRecord[]) => void;
 }
@@ -111,6 +117,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   enrichments = [],
   k13Analysis,
   k13KKM,
+  learningPlans = [],
   initialTab = 'time_planning',
   onSaveCalendar,
   onSaveTimeAllocations,
@@ -123,6 +130,8 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   onSaveEnrichments,
   onSaveK13Analysis,
   onSaveK13KKM,
+  onSaveLearningPlan,
+  onDeleteLearningPlan,
   onBackToStep,
   onUpdateDocuments,
 }) => {
@@ -136,6 +145,13 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
       sublabel: 'Kalender & Alokasi JP',
       icon: CalendarDays,
       badge: `${calendar?.effectiveWeeks || 18} Mg`,
+    },
+    {
+      id: 'learning_plan' as AdministrationTab,
+      label: 'Rencana Pembelajaran',
+      sublabel: 'Modul Ajar / RPP',
+      icon: BookOpen,
+      badge: `${learningPlans?.length || 0} Draf`,
     },
     {
       id: 'kktp' as AdministrationTab,
@@ -230,7 +246,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
         </div>
 
         {/* Tab Navigation Pill Bar */}
-        <div className="mt-6 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="mt-6 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -282,6 +298,23 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
             timeAllocations={timeAllocations}
             onSaveCalendar={onSaveCalendar}
             onSaveTimeAllocations={onSaveTimeAllocations}
+          />
+        )}
+
+        {activeTab === 'learning_plan' && (
+          <LearningPlanManager
+            school={school}
+            profile={profile}
+            academicSetting={academicSetting}
+            workspace={workspace}
+            tp={tp}
+            atp={atp}
+            students={students}
+            timeAllocations={timeAllocations}
+            assessmentCriteria={assessmentCriteria}
+            learningPlans={learningPlans || []}
+            onSavePlan={onSaveLearningPlan || (() => {})}
+            onDeletePlan={onDeleteLearningPlan || (() => {})}
           />
         )}
 
@@ -372,6 +405,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
             enrichments={enrichments}
             k13Analysis={k13Analysis}
             k13KKM={k13KKM}
+            learningPlans={learningPlans}
             onBackToStep={onBackToStep}
             onUpdateDocuments={onUpdateDocuments}
           />

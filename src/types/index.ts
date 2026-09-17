@@ -522,55 +522,121 @@ export interface AssessmentCriterion {
 }
 
 // ==========================================
-// MODEL GENERIK PERENCANAAN PEMBELAJARAN
+// MODEL CANONICAL PERENCANAAN PEMBELAJARAN
 // (Permendikbudristek 12/2024 & Permendikdasmen 13/2025)
 // ==========================================
-export interface LearningPlanObjective {
+export type LearningPlanStatus =
+  | 'DRAFT'
+  | 'PERLU_DILENGKAPI'
+  | 'SIAP';
+
+export type LearningPlanSource =
+  | 'MANUAL'
+  | 'AI_DRAFT'
+  | 'MIGRATED';
+
+export interface LearningObjectiveReference {
   id: string;
+  tpId?: string;
   code?: string;
   statement: string;
   materialScope?: string;
 }
 
-export interface LearningPlanStep {
-  stepName: 'Pendahuluan' | 'Kegiatan Inti' | 'Penutup' | string;
-  durationMinutes?: number;
+export interface LearningActivity {
+  id: string;
+  stepName?: 'Pendahuluan' | 'Kegiatan Inti' | 'Penutup' | string;
+  title?: string;
   description: string;
+  durationMinutes?: number;
+  activityType?: 'opening' | 'core' | 'closing' | string;
 }
 
-export interface LearningPlanAssessment {
-  technique: string; // e.g. "Tes Tertulis", "Kinerja", "Observasi"
-  instrument: string; // e.g. "Rubrik", "Daftar Cek", "Soal Uraian"
-  type: 'formatif' | 'sumatif' | 'diagnostik' | string;
+export interface AssessmentPlanItem {
+  id: string;
+  type: 'INITIAL' | 'FORMATIVE' | 'SUMMATIVE';
+  method?: string;
+  technique?: string;
+  instrument?: string;
+  linkedTpIds: string[];
+  description?: string;
+}
+
+export interface LearningResource {
+  id: string;
+  type?: string;
+  title: string;
+  source?: string;
+  url?: string;
+}
+
+export interface DifferentiationPlan {
+  content?: string;
+  process?: string;
+  product?: string;
+  notes?: string;
+}
+
+export interface ReflectionPlan {
+  teacherReflection?: string;
+  studentReflection?: string;
 }
 
 /**
- * Model generik internal perencanaan pembelajaran.
+ * Model canonical perencanaan pembelajaran (Modul Ajar / RPP).
  * Komponen minimal sesuai regulasi:
- * 1. Tujuan Pembelajaran
- * 2. Langkah/Kegiatan Pembelajaran
- * 3. Asesmen / Rencana Penilaian
+ * 1. Tujuan Pembelajaran (Canonical TP/ATP references)
+ * 2. Langkah/Kegiatan Pembelajaran (Pendahuluan, Inti, Penutup)
+ * 3. Asesmen / Rencana Penilaian (Awal, Formatif, Sumatif)
  */
 export interface LearningPlan {
   id: string;
   academicSettingId: string;
   curriculumType: CurriculumType;
-  title: string;
-  objectives: LearningPlanObjective[];
-  learningSteps: LearningPlanStep[];
-  assessmentPlan: LearningPlanAssessment[];
-  materials?: string[];
-  resources?: string[];
-  differentiation?: {
-    content?: string;
-    process?: string;
-    product?: string;
+  sourceType: LearningPlanSource;
+  status: LearningPlanStatus;
+
+  // Canonical dependencies
+  tpIds: string[];
+  atpItemIds: string[];
+  kktpCriterionIds?: string[];
+  timeAllocationIds?: string[];
+
+  title?: string;
+  topic?: string;
+
+  objectives: LearningObjectiveReference[];
+
+  learningSteps: {
+    opening?: LearningActivity[];
+    core?: LearningActivity[];
+    closing?: LearningActivity[];
   };
-  reflection?: {
-    teacherReflection?: string;
-    studentReflection?: string;
+
+  assessmentPlan: {
+    initial?: AssessmentPlanItem[];
+    formative?: AssessmentPlanItem[];
+    summative?: AssessmentPlanItem[];
   };
+
+  resources?: LearningResource[];
+  differentiation?: DifferentiationPlan;
+  meaningfulUnderstanding?: string;
+  triggerQuestions?: string[];
+  reflection?: ReflectionPlan;
+  enrichmentPlan?: string;
+  remedialPlan?: string;
+
+  // Explicit contextual metadata provided by teacher
+  initialCompetency?: string;
+  targetStudents?: string;
+  learningModel?: string;
+  p3Dimensions?: string[];
+  allocatedJP?: number;
+
+  createdAt: string;
   updatedAt: string;
+  confirmedAt?: string;
 }
 
 export type AssessmentType = 'formatif' | 'sumatif_lingkup_materi' | 'sumatif_akhir_semester';
@@ -775,6 +841,7 @@ export interface ProfileWorkspaceData {
   enrichments: EnrichmentRecord[];
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
+  learningPlans: LearningPlan[];
 }
 
 export interface AppStorageState {
@@ -809,6 +876,7 @@ export interface AppStorageState {
   enrichmentRecords?: EnrichmentRecord[];
   k13Analyses?: K13Analysis[];
   k13KKMs?: K13KKM[];
+  learningPlans?: LearningPlan[];
 }
 
 export type AppDataStore = AppStorageState;
