@@ -65,6 +65,17 @@ export function createEmptyAssessmentPackage(
   };
 }
 
+function getExplicitCurriculumType(setting?: AcademicSetting | null): 'KURIKULUM_MERDEKA' | 'K13' | 'UNRESOLVED' {
+  if (!setting) return 'UNRESOLVED';
+  if (setting.curriculumType === 'K13') return 'K13';
+  if (setting.curriculumType === 'KURIKULUM_MERDEKA') return 'KURIKULUM_MERDEKA';
+  if (!setting.curriculum || setting.curriculum.trim() === '') return 'UNRESOLVED';
+  const cur = setting.curriculum.toLowerCase();
+  if (cur.includes('2013') || cur.includes('k13')) return 'K13';
+  if (cur.includes('merdeka')) return 'KURIKULUM_MERDEKA';
+  return 'UNRESOLVED';
+}
+
 export function validateAssessmentPackage(
   pkg: AssessmentPackage,
   context: AssessmentPackageValidationContext
@@ -107,36 +118,122 @@ export function validateAssessmentPackage(
     });
   }
 
-  // 3. Objective Source Verification for Blueprint (Kisi-Kisi)
-  const validObjectiveIds = new Set<string>();
-  if (isMerdeka(context.academicSetting)) {
-    if (context.tp?.items) {
-      context.tp.items.forEach((t) => validObjectiveIds.add(t.id));
-    }
-  } else if (isK13(context.academicSetting)) {
-    if (context.k13Analysis?.items) {
-      context.k13Analysis.items.forEach((k) => validObjectiveIds.add(k.id));
-    }
-  }
-
-  if (pkg.blueprintItems.length === 0) {
-    warnings.push('Kisi-kisi asesmen (blueprint) masih kosong.');
+  // 3. Objective Source Verification for Blueprint (Kisi-Kisi) - Mandatory & Fail-Closed
+  if (!pkg.blueprintItems || pkg.blueprintItems.length === 0) {
+    errors.push('Kisi-kisi asesmen (blueprint) wajib diisi. Perangkat Asesmen tanpa kisi-kisi tidak dapat berstatus SIAP.');
   } else {
+    const curType = getExplicitCurriculumType(context.academicSetting);
+
+    if (curType === 'UNRESOLVED') {
+      errors.push('Kurikulum tidak dapat ditentukan atau tidak didukung (curriculum unresolved).');
+    } else if (curType === 'KURIKULUM_MERDEKA') {
+      if (!context.tp || !context.tp.items) {
+        errors.push('Sumber data TP (TPData) tidak tersedia atau tidak dapat diverifikasi.');
+      } else {
+        const validObjectiveIds = new Set(context.tp.items.map((t) => t.id));
+        pkg.blueprintItems.forEach((bp, idx) => {
+          if (!bp.objectiveRefId) {
+            errors.push(`Butir kisi-kisi #${idx + 1} tidak memiliki referensi Tujuan Pembelajaran (TP).`);
+          } else if (!validObjectiveIds.has(bp.objectiveRefId)) {
+            errors.push(
+              `Butir kisi-kisi #${idx + 1} merujuk pada TP ID [${bp.objectiveRefId}] yang tidak valid atau tidak ditemukan.`
+            );
+          }
+        });
+      }
+    } else if (curType === 'K13') {
+      if (!context.k13Analysis || !context.k13Analysis.items) {
+        errors.push('Sumber data KD/K13Analysis tidak tersedia atau tidak dapat diverifikasi.');
+      } else {
+        const validObjectiveIds = new Set(context.k13Analysis.items.map((k) => k.id));
+        pkg.blueprintItems.forEach((bp, idx) => {
+          if (!bp.objectiveRefId) {
+            errors.push(`Butir kisi-kisi #${idx + 1} tidak memiliki referensi Kompetensi Dasar (KD).`);
+          } else if (!validObjectiveIds.has(bp.objectiveRefId)) {
+            errors.push(
+              `Butir kisi-kisi #${idx + 1} merujuk pada KD ID [${bp.objectiveRefId}] yang tidak valid atau tidak ditemukan.`
+            );
+          }
+        });
+      }
+    }
+
+    // Blueprint -> Instrument Item Linkage Mapping
+    const itemToInstrumentType = new Map<string, string>();
+    const packageInstrumentTypes = new Set<string>();
+
+    pkg.instruments.forEach((inst) => {
+      packageInstrumentTypes.add(inst.type);
+      switch (inst.type) {
+        case 'WRITTEN_TEST':
+          (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, 'WRITTEN_TEST');
+          });
+          break;
+        case 'ORAL_TEST':
+          (inst as OralAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, 'ORAL_TEST');
+          });
+          break;
+        case 'PERFORMANCE':
+          (inst as PerformanceAssessmentInstrument).aspects?.forEach((asp) => {
+            itemToInstrumentType.set(asp.id, 'PERFORMANCE');
+          });
+          break;
+        case 'OBSERVATION':
+          (inst as ObservationAssessmentInstrument).aspects?.forEach((asp) => {
+            itemToInstrumentType.set(asp.id, 'OBSERVATION');
+          });
+          break;
+        case 'SELF_ASSESSMENT':
+        case 'PEER_ASSESSMENT':
+          (inst as SelfPeerAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, inst.type);
+          });
+          break;
+        default:
+          itemToInstrumentType.set(inst.id, inst.type);
+          break;
+      }
+    });
+
     pkg.blueprintItems.forEach((bp, idx) => {
-      if (!bp.objectiveRefId) {
-        errors.push(`Butir kisi-kisi #${idx + 1} tidak memiliki referensi Tujuan Pembelajaran (TP/KD).`);
-      } else if (validObjectiveIds.size > 0 && !validObjectiveIds.has(bp.objectiveRefId)) {
+      // Instrument type check
+      if (!bp.instrumentType) {
+        errors.push(`Butir kisi-kisi #${idx + 1} belum menentukan bentuk instrumen (instrumentType kosong).`);
+      } else if (!packageInstrumentTypes.has(bp.instrumentType)) {
         errors.push(
-          `Butir kisi-kisi #${idx + 1} merujuk pada TP/KD ID [${bp.objectiveRefId}] yang tidak valid atau telah dihapus.`
+          `Bentuk instrumen "${bp.instrumentType}" pada kisi-kisi #${idx + 1} tidak ditemukan pada instrumen Perangkat Asesmen.`
         );
       }
 
-      if (bp.criterionId && context.assessmentCriteria) {
-        const critExists = context.assessmentCriteria.some((c) => c.id === bp.criterionId);
-        if (!critExists) {
+      // instrumentItemIds check
+      if (bp.instrumentItemIds && bp.instrumentItemIds.length > 0) {
+        bp.instrumentItemIds.forEach((itemId) => {
+          const foundType = itemToInstrumentType.get(itemId);
+          if (!foundType) {
+            errors.push(
+              `Butir kisi-kisi #${idx + 1} merujuk pada instrumentItemId [${itemId}] yang tidak ditemukan (dangling reference).`
+            );
+          } else if (bp.instrumentType && foundType !== bp.instrumentType) {
+            errors.push(
+              `Butir kisi-kisi #${idx + 1} (${bp.instrumentType}) merujuk pada instrumentItemId [${itemId}] yang bertipe "${foundType}" (cross-instrument-type reference).`
+            );
+          }
+        });
+      }
+
+      // Criterion ID check
+      if (bp.criterionId) {
+        if (!context.assessmentCriteria) {
           errors.push(
-            `Butir kisi-kisi #${idx + 1} merujuk pada kriteria KKTP [${bp.criterionId}] yang tidak ditemukan.`
+            `Butir kisi-kisi #${idx + 1} menggunakan criterionId [${bp.criterionId}], tetapi sumber kriteria KKTP tidak tersedia.`
           );
+        } else {
+          const critExists = context.assessmentCriteria.some((c) => c.id === bp.criterionId);
+          if (!critExists) {
+            errors.push(`Butir kisi-kisi #${idx + 1} merujuk pada kriteria KKTP [${bp.criterionId}] yang tidak ditemukan.`);
+          }
         }
       }
 
@@ -351,23 +448,101 @@ export function invalidateAssessmentPackageDependencies(
     });
   }
 
-  // 2. Check Objective references in Blueprint
-  const validObjectiveIds = new Set<string>();
-  if (isMerdeka(context.academicSetting)) {
-    if (context.tp?.items) {
-      context.tp.items.forEach((t) => validObjectiveIds.add(t.id));
-    }
-  } else if (isK13(context.academicSetting)) {
-    if (context.k13Analysis?.items) {
-      context.k13Analysis.items.forEach((k) => validObjectiveIds.add(k.id));
-    }
-  }
+  // 2. Check Objective references in Blueprint - Fail Closed
+  if (!pkg.blueprintItems || pkg.blueprintItems.length === 0) {
+    reasons.push('Kisi-kisi (blueprint) kosong.');
+  } else {
+    const curType = getExplicitCurriculumType(context.academicSetting);
 
-  if (validObjectiveIds.size > 0 && pkg.blueprintItems.length > 0) {
-    const invalidBp = pkg.blueprintItems.filter((bp) => !validObjectiveIds.has(bp.objectiveRefId));
-    if (invalidBp.length > 0) {
-      reasons.push(`Terdapat ${invalidBp.length} referensi TP/KD pada kisi-kisi yang telah dihapus di hulu.`);
+    if (curType === 'UNRESOLVED') {
+      reasons.push('Kurikulum tidak dapat ditentukan (curriculum unresolved).');
+    } else if (curType === 'KURIKULUM_MERDEKA') {
+      if (!context.tp || !context.tp.items) {
+        reasons.push('Sumber data TP (TPData) tidak tersedia atau telah dihapus.');
+      } else {
+        const validTpIds = new Set(context.tp.items.map((t) => t.id));
+        const invalidBp = pkg.blueprintItems.filter((bp) => !validTpIds.has(bp.objectiveRefId));
+        if (invalidBp.length > 0) {
+          reasons.push(`Terdapat ${invalidBp.length} referensi TP pada kisi-kisi yang tidak valid atau telah dihapus di hulu.`);
+        }
+      }
+    } else if (curType === 'K13') {
+      if (!context.k13Analysis || !context.k13Analysis.items) {
+        reasons.push('Sumber data KD (K13Analysis) tidak tersedia atau telah dihapus.');
+      } else {
+        const validKdIds = new Set(context.k13Analysis.items.map((k) => k.id));
+        const invalidBp = pkg.blueprintItems.filter((bp) => !validKdIds.has(bp.objectiveRefId));
+        if (invalidBp.length > 0) {
+          reasons.push(`Terdapat ${invalidBp.length} referensi KD pada kisi-kisi yang tidak valid atau telah dihapus di hulu.`);
+        }
+      }
     }
+
+    // 3. Check Criteria references
+    pkg.blueprintItems.forEach((bp) => {
+      if (bp.criterionId) {
+        if (!context.assessmentCriteria) {
+          reasons.push('Sumber data kriteria KKTP tidak tersedia atau telah dihapus.');
+        } else if (!context.assessmentCriteria.some((c) => c.id === bp.criterionId)) {
+          reasons.push(`Kriteria KKTP [${bp.criterionId}] tidak lagi ditemukan pada sumber kriteria.`);
+        }
+      }
+    });
+
+    // 4. Check Blueprint -> Instrument Item Linkages
+    const itemToInstrumentType = new Map<string, string>();
+    const packageInstrumentTypes = new Set<string>();
+
+    pkg.instruments.forEach((inst) => {
+      packageInstrumentTypes.add(inst.type);
+      switch (inst.type) {
+        case 'WRITTEN_TEST':
+          (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, 'WRITTEN_TEST');
+          });
+          break;
+        case 'ORAL_TEST':
+          (inst as OralAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, 'ORAL_TEST');
+          });
+          break;
+        case 'PERFORMANCE':
+          (inst as PerformanceAssessmentInstrument).aspects?.forEach((asp) => {
+            itemToInstrumentType.set(asp.id, 'PERFORMANCE');
+          });
+          break;
+        case 'OBSERVATION':
+          (inst as ObservationAssessmentInstrument).aspects?.forEach((asp) => {
+            itemToInstrumentType.set(asp.id, 'OBSERVATION');
+          });
+          break;
+        case 'SELF_ASSESSMENT':
+        case 'PEER_ASSESSMENT':
+          (inst as SelfPeerAssessmentInstrument).items?.forEach((it) => {
+            itemToInstrumentType.set(it.id, inst.type);
+          });
+          break;
+        default:
+          itemToInstrumentType.set(inst.id, inst.type);
+          break;
+      }
+    });
+
+    pkg.blueprintItems.forEach((bp) => {
+      if (!bp.instrumentType || !packageInstrumentTypes.has(bp.instrumentType)) {
+        reasons.push(`Bentuk instrumen "${bp.instrumentType}" tidak valid pada instrumen Perangkat Asesmen.`);
+      }
+      if (bp.instrumentItemIds && bp.instrumentItemIds.length > 0) {
+        bp.instrumentItemIds.forEach((itemId) => {
+          const foundType = itemToInstrumentType.get(itemId);
+          if (!foundType) {
+            reasons.push(`Referensi instrumentItemId [${itemId}] pada kisi-kisi tidak ditemukan.`);
+          } else if (bp.instrumentType && foundType !== bp.instrumentType) {
+            reasons.push(`Referensi instrumentItemId [${itemId}] tidak sesuai dengan instrumen ${bp.instrumentType}.`);
+          }
+        });
+      }
+    });
   }
 
   if (reasons.length > 0) {
@@ -388,6 +563,6 @@ export function invalidateAssessmentPackageDependencies(
   return {
     isInvalidated: false,
     package: pkg,
-    reasons: [],
+    reasons,
   };
 }

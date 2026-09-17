@@ -731,7 +731,7 @@ export interface AssessmentBlueprintItem {
   criterionId?: string; // ID for KKTP Criterion
   assessmentIndicator?: string; // Indicator written by teacher
   materialOrContext?: string; // Material/Context written by teacher
-  instrumentType: AssessmentInstrumentType;
+  instrumentType: AssessmentInstrumentType | '';
   instrumentItemIds: string[];
   order: number;
   status?: 'DRAFT' | 'REVIEWED';

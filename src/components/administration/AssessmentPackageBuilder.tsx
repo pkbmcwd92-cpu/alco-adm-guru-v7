@@ -333,10 +333,8 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                     onClick={() => {
                       const newBpItem: AssessmentBlueprintItem = {
                         id: `bp-${Date.now()}`,
-                        objectiveRefId: isMerdeka(academicSetting)
-                          ? tp?.items?.[0]?.id || ''
-                          : k13Analysis?.items?.[0]?.id || '',
-                        instrumentType: selectedPlan?.instruments?.[0]?.type || 'WRITTEN_TEST',
+                        objectiveRefId: '',
+                        instrumentType: '',
                         instrumentItemIds: [],
                         order: activePackage.blueprintItems.length + 1,
                         assessmentIndicator: '',
@@ -437,6 +435,7 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                 }}
                                 className="w-full text-xs p-1.5 border border-slate-300 rounded"
                               >
+                                <option value="">-- Pilih Bentuk Instrumen --</option>
                                 {selectedPlan?.instruments.map((i) => (
                                   <option key={i.id} value={i.type}>
                                     {i.label || i.type}

@@ -151,7 +151,7 @@ export async function generateAssessment(context: DocumentGenerationContext): Pr
     if (context.activeAssessmentPackageId && context.assessmentPackages) {
       pkg = context.assessmentPackages.find((p) => p.id === context.activeAssessmentPackageId);
     } else if (context.assessmentPackages && context.assessmentPackages.length > 0) {
-      pkg = context.assessmentPackages.find((p) => p.workflowStatus === 'SIAP') || context.assessmentPackages[0];
+      pkg = context.assessmentPackages.find((p) => p.workflowStatus === 'SIAP');
     }
 
     if (!pkg) {

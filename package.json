@@ -17,7 +17,8 @@
     "test:kktp": "tsx scripts/testKKTPRegression.ts",
     "test:calendar": "tsx scripts/testCalendarJpRegression.ts",
     "test:audit8": "tsx scripts/testAuditNo8LearningPlanRegression.ts",
-    "test:audit9a": "tsx scripts/testAuditNo9AAssessmentMasterRegression.ts"
+    "test:audit9a": "tsx scripts/testAuditNo9AAssessmentMasterRegression.ts",
+    "test:audit9b": "tsx scripts/testAuditNo9BAssessmentPackageRegression.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
