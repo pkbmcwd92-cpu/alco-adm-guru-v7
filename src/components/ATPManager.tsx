@@ -21,8 +21,8 @@ import {
 } from 'lucide-react';
 import { ATPData, ATPItem, TPData, CPData, AcademicSetting, TeacherProfile, ActiveContext } from '../types';
 import { generateATPWithAI, refineTextWithAI } from '../services/aiService';
+import { validateATPReferences, resolveATPItemTPReference, normalizeATPReferences } from '../services/cpWorkflowService';
 import { P3_DIMENSIONS } from '../data/curriculumDefaults';
-import { matchCanonicalTP } from '../services/workflowEngine';
 
 interface ATPManagerProps {
   atp: ATPData;
@@ -64,7 +64,8 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
   }, [atp]);
 
   const hasTP = tp.items && tp.items.length > 0;
-  const totalJP = items.reduce((acc, curr) => acc + (Number(curr.jp) || 0), 0);
+  const knownTotalJP = items.reduce((acc, curr) => acc + (curr.jp !== undefined && curr.jp !== null ? Number(curr.jp) : 0), 0);
+  const hasUnknownJP = items.some((item) => item.jp === undefined || item.jp === null);
 
   // Integrity Check: TP was modified after ATP was formed
   const isTPOutdated =
@@ -104,43 +105,63 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
       });
 
       const formattedItems: ATPItem[] = generated.items.map((item, idx) => {
-        const matchedTP = matchCanonicalTP(item, tp.items);
-        const resolvedJP = item.allocatedJP !== undefined && item.allocatedJP !== null
-          ? Number(item.allocatedJP)
-          : item.jp !== undefined && item.jp !== null
-          ? Number(item.jp)
-          : null;
-
-        return {
-          id: `atp-item-${Date.now()}-${idx}`,
+        const candidateItem: ATPItem = {
+          id: `atp-item-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
           stepNumber: item.stepNumber || idx + 1,
-          tpId: matchedTP ? matchedTP.id : '',
-          tpCode: matchedTP ? (matchedTP.code || item.tpCode || '') : (item.tpCode || ''),
-          tpStatement: matchedTP ? matchedTP.statement : (item.tpStatement || ''),
-          materialScope: matchedTP ? (matchedTP.contentScope || '') : (item.materialScope || ''),
-          allocatedJP: resolvedJP,
-          jp: resolvedJP,
-          p3Dimensions: item.p3Dimensions && item.p3Dimensions.length > 0
-            ? item.p3Dimensions
-            : matchedTP?.p3Dimensions && matchedTP.p3Dimensions.length > 0
-            ? matchedTP.p3Dimensions
-            : [],
+          tpId: (item as any).tpId || '',
+          tpCode: item.tpCode || '',
+          tpStatement: item.tpStatement || '',
+          materialScope: item.materialScope || '',
+          jp: item.jp !== undefined && item.jp !== null && Number(item.jp) > 0 ? Number(item.jp) : undefined,
+          semester: (item.semester === 1 || item.semester === 2) ? item.semester : (context.semester === 1 || context.semester === 2 ? context.semester : undefined),
+          p3Dimensions: Array.isArray(item.p3Dimensions) ? item.p3Dimensions : [],
           assessmentPlan: item.assessmentPlan || '',
           glossary: item.glossary || '',
           resources: item.resources || '',
         };
+
+        const refResult = resolveATPItemTPReference(candidateItem, tp.items);
+        if (refResult.status === 'RESOLVED_REFERENCE' || refResult.status === 'LEGACY_MIGRATED') {
+          const canonical = refResult.canonicalTPItem!;
+          candidateItem.tpId = canonical.id;
+          candidateItem.tpCode = canonical.code;
+          candidateItem.tpStatement = canonical.statement;
+          if (!candidateItem.materialScope) {
+            candidateItem.materialScope = canonical.contentScope || '';
+          }
+          if (candidateItem.p3Dimensions.length === 0 && canonical.p3Dimensions) {
+            candidateItem.p3Dimensions = [...canonical.p3Dimensions];
+          }
+        }
+        return candidateItem;
       });
 
       setRationale(generated.rationale);
       setItems(formattedItems);
 
-      // Auto save
+      const genKnownTotal = formattedItems.reduce((acc, curr) => acc + (curr.jp !== undefined && curr.jp !== null ? Number(curr.jp) : 0), 0);
+      const genHasUnknown = formattedItems.some((i) => i.jp === undefined || i.jp === null);
+
+      // Auto save as DRAFT (Teacher review required)
       const updated: ATPData = {
         ...atp,
         academicSettingId: academicSetting.id,
+        tpDataId: tp.id,
+        tpId: tp.id,
+        academicYear: context.academicYear,
+        subjectCode: context.subjectCode || context.subject,
+        phase: context.phase,
         rationale: generated.rationale,
         items: formattedItems,
-        totalJP: formattedItems.reduce((acc, curr) => acc + (Number(curr.allocatedJP ?? curr.jp) || 0), 0),
+        totalJP: genKnownTotal,
+        knownTotalJP: genKnownTotal,
+        hasUnknownJP: genHasUnknown,
+        allocationComplete: !genHasUnknown,
+        generatedBy: 'AI',
+        workflowStatus: 'DRAFT',
+        generatedAt: new Date().toISOString(),
+        needsReview: false,
+        reviewReason: undefined,
         basedOnTpUpdatedAt: tp.updatedAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -154,18 +175,62 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
   };
 
   const handleSave = () => {
+    const isAiOrigin = atp.generatedBy === 'AI' || atp.generatedBy === 'AI_EDITED_BY_TEACHER';
     const updated: ATPData = {
       ...atp,
       academicSettingId: academicSetting.id,
       rationale,
       items: items.map((item, idx) => ({ ...item, stepNumber: idx + 1 })),
-      totalJP,
+      totalJP: knownTotalJP,
+      knownTotalJP,
+      hasUnknownJP,
+      allocationComplete: !hasUnknownJP,
+      generatedBy: isAiOrigin ? 'AI_EDITED_BY_TEACHER' : 'TEACHER',
       basedOnTpUpdatedAt: tp.updatedAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     onSaveATP(updated);
     setSaveNotice(true);
     setTimeout(() => setSaveNotice(false), 2500);
+  };
+
+  const handleConfirmAndFinalize = () => {
+    const isAiOrigin = atp.generatedBy === 'AI' || atp.generatedBy === 'AI_EDITED_BY_TEACHER';
+    const candidate: ATPData = {
+      ...atp,
+      academicSettingId: academicSetting.id,
+      tpDataId: tp.id,
+      tpId: tp.id,
+      academicYear: context.academicYear,
+      subjectCode: context.subjectCode || context.subject,
+      phase: context.phase,
+      rationale,
+      items: items.map((item, idx) => ({ ...item, stepNumber: idx + 1 })),
+      totalJP: knownTotalJP,
+      knownTotalJP,
+      hasUnknownJP,
+      allocationComplete: !hasUnknownJP,
+      workflowStatus: 'SIAP',
+      generatedBy: isAiOrigin ? 'AI_EDITED_BY_TEACHER' : (atp.generatedBy || 'TEACHER'),
+      basedOnTpUpdatedAt: tp.updatedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const valRes = validateATPReferences(candidate, tp);
+    if (valRes.isSiap) {
+      candidate.workflowStatus = 'SIAP';
+      candidate.needsReview = false;
+      candidate.reviewReason = undefined;
+      onSaveATP(candidate);
+      setSaveNotice(true);
+      setTimeout(() => setSaveNotice(false), 2500);
+    } else {
+      candidate.workflowStatus = 'PERLU_DILENGKAPI';
+      candidate.needsReview = true;
+      candidate.reviewReason = valRes.issues.join('; ');
+      onSaveATP(candidate);
+      alert(`ATP belum dapat difinalisasi karena ditemukan isu validasi:\n\n• ${valRes.issues.join('\n• ')}`);
+    }
   };
 
   const handleSaveAndNext = () => {
@@ -197,16 +262,18 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
 
   const handleOpenAdd = () => {
     const nextStep = items.length + 1;
+    const firstTP = tp.items[0];
+    const gradeNum = context.grade.replace(/[^0-9]/g, '') || '4';
     setCurrentItem({
-      id: `atp-${Date.now()}`,
+      id: `atp-item-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       stepNumber: nextStep,
-      tpId: '',
-      tpCode: '',
-      tpStatement: '',
-      materialScope: '',
-      allocatedJP: null,
-      jp: null as any,
-      p3Dimensions: [],
+      tpId: firstTP?.id,
+      tpCode: firstTP?.code || `TP ${gradeNum}.${nextStep}`,
+      tpStatement: firstTP?.statement || '',
+      materialScope: firstTP?.contentScope || '',
+      jp: undefined,
+      semester: (context.semester === 1 || context.semester === 2) ? context.semester : undefined,
+      p3Dimensions: firstTP?.p3Dimensions ? [...firstTP.p3Dimensions] : [],
       assessmentPlan: '',
       glossary: '',
       resources: '',
@@ -302,11 +369,26 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
       <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="w-6 h-6 rounded-md bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center">
                 06
               </span>
               <h3 className="text-lg font-bold text-slate-900">Penyusunan Alur Tujuan Pembelajaran (ATP)</h3>
+              {atp.workflowStatus === 'DRAFT' && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  DRAFT (Perlu Konfirmasi Guru)
+                </span>
+              )}
+              {atp.workflowStatus === 'PERLU_DILENGKAPI' && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                  PERLU DILENGKAPI
+                </span>
+              )}
+              {atp.workflowStatus === 'SIAP' && (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  SIAP
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-1">
               Petakan alur pengurutan materi, estimasi Jam Pelajaran (JP), asesmen, dan kata kunci glosarium untuk <strong>{context.subject}</strong> ({context.grade} - Semester {context.semester}).
@@ -377,7 +459,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
               <span>Matriks Alur Pembelajaran ({items.length} Langkah)</span>
             </h4>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
-              <Clock className="w-3 h-3 text-blue-600" /> Total: {totalJP} JP
+              <Clock className="w-3 h-3 text-blue-600" /> Total: {knownTotalJP} JP {hasUnknownJP ? '*' : ''}
             </span>
           </div>
 
@@ -404,41 +486,53 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
               <thead>
                 <tr className="bg-slate-900 text-white font-semibold">
                   <th className="p-3 w-12 text-center">No.</th>
-                  <th className="p-3 w-20">Kode</th>
-                  <th className="p-3 min-w-[240px]">Tujuan Pembelajaran</th>
-                  <th className="p-3 min-w-[150px]">Lingkup Materi</th>
-                  <th className="p-3 min-w-[130px]">Profil Pancasila</th>
-                  <th className="p-3 min-w-[160px]">Rencana Asesmen</th>
-                  <th className="p-3 w-16 text-center">JP</th>
+                  <th className="p-3 w-28">Kode & Status</th>
+                  <th className="p-3 min-w-[240px]">Tujuan Pembelajaran (TP Canonical)</th>
+                  <th className="p-3 min-w-[140px]">Lingkup Materi</th>
+                  <th className="p-3 min-w-[120px]">Profil Pancasila</th>
+                  <th className="p-3 min-w-[150px]">Rencana Asesmen</th>
+                  <th className="p-3 w-20 text-center">Sem / JP</th>
                   <th className="p-3 w-24 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 bg-white">
                 {items.map((item, idx) => {
-                  const isOrphan = !item.tpId || !tp.items.some((t) => t.id === item.tpId);
-                  const displayJP = item.allocatedJP !== undefined && item.allocatedJP !== null
-                    ? `${item.allocatedJP} JP`
-                    : item.jp !== undefined && item.jp !== null
-                    ? `${item.jp} JP`
-                    : '-';
-
+                  const refStatus = resolveATPItemTPReference(item, tp.items);
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-3 text-center font-bold text-slate-700 bg-slate-50/50">
                         {idx + 1}
                       </td>
-                      <td className="p-3 font-mono font-bold text-blue-900 whitespace-nowrap">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span>{item.tpCode || `TP ${idx + 1}`}</span>
-                          {isOrphan && (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              Orphan TP
-                            </span>
-                          )}
-                        </div>
+                      <td className="p-3 font-mono text-xs">
+                        <div className="font-bold text-blue-900">{item.tpCode || '-'}</div>
+                        {refStatus.status === 'DANGLING_REFERENCE' && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                            ⚠️ TP Terhapus
+                          </span>
+                        )}
+                        {refStatus.status === 'AMBIGUOUS_REFERENCE' && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                            ⚠️ TP Ambigu
+                          </span>
+                        )}
+                        {refStatus.status === 'UNRESOLVED_REFERENCE' && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                            ⚠️ Terputus
+                          </span>
+                        )}
+                        {refStatus.status === 'LEGACY_MIGRATED' && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            ℹ️ Migrasi
+                          </span>
+                        )}
+                        {refStatus.status === 'RESOLVED_REFERENCE' && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            ✓ Canonical
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 font-medium text-slate-900 leading-relaxed">
-                        {item.tpStatement}
+                        {item.tpStatement || refStatus.canonicalTPItem?.statement || '-'}
                         {item.glossary && (
                           <div className="text-[11px] text-slate-500 mt-1">
                             <span className="font-semibold text-slate-700">Glosarium:</span> {item.glossary}
@@ -465,54 +559,59 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                       <td className="p-3 text-slate-600 text-[11px] leading-relaxed">
                         {item.assessmentPlan || '-'}
                       </td>
-                      <td className="p-3 text-center font-bold text-slate-900 bg-slate-50/50">
-                        {displayJP}
-                      </td>
-                      <td className="p-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={() => handleMove(idx, 'up')}
-                            disabled={idx === 0}
-                            className="p-1 text-slate-400 hover:text-slate-700 rounded transition disabled:opacity-20"
-                            title="Geser naik"
-                          >
-                            <ArrowUp className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleMove(idx, 'down')}
-                            disabled={idx === items.length - 1}
-                            className="p-1 text-slate-400 hover:text-slate-700 rounded transition disabled:opacity-20"
-                            title="Geser turun"
-                          >
-                            <ArrowDown className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleOpenEdit(item)}
-                            className="p-1 text-slate-400 hover:text-blue-600 rounded transition"
-                            title="Edit baris ATP"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition"
-                            title="Hapus baris"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                      <td className="p-3 text-center bg-slate-50/50">
+                        <div className="font-bold text-slate-900">
+                          {item.jp !== undefined && item.jp !== null ? `${item.jp} JP` : '-'}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {item.semester ? `Sem ${item.semester}` : '-'}
                         </div>
                       </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+                    <td className="p-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => handleMove(idx, 'up')}
+                          disabled={idx === 0}
+                          className="p-1 text-slate-400 hover:text-slate-700 rounded transition disabled:opacity-20"
+                          title="Geser naik"
+                        >
+                          <ArrowUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleMove(idx, 'down')}
+                          disabled={idx === items.length - 1}
+                          className="p-1 text-slate-400 hover:text-slate-700 rounded transition disabled:opacity-20"
+                          title="Geser turun"
+                        >
+                          <ArrowDown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenEdit(item)}
+                          className="p-1 text-slate-400 hover:text-blue-600 rounded transition"
+                          title="Edit baris ATP"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition"
+                          title="Hapus baris"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
               <tfoot>
                 <tr className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
                   <td colSpan={6} className="p-3 text-right">
                     Total Alokasi Waktu Semester:
                   </td>
                   <td className="p-3 text-center bg-blue-50 text-blue-900 font-extrabold">
-                    {totalJP} JP
+                    {knownTotalJP} JP {hasUnknownJP ? '*' : ''}
                   </td>
                   <td className="p-3"></td>
                 </tr>
@@ -520,18 +619,32 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
             </table>
           </div>
         )}
+        {hasUnknownJP && (
+          <p className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200 mt-2 font-medium">
+            * Terdapat langkah ATP yang belum memiliki alokasi JP. Harap lengkapi JP sebelum memfinalisasi alur.
+          </p>
+        )}
       </div>
 
       {/* Action Footer */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             id="btn-save-atp-draft"
             type="button"
             onClick={handleSave}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 shadow-xs transition"
+            className="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 shadow-xs transition"
           >
             Simpan Matriks ATP
+          </button>
+          <button
+            id="btn-confirm-atp-siap"
+            type="button"
+            onClick={handleConfirmAndFinalize}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 shadow-sm transition flex items-center gap-1.5"
+          >
+            <Check className="w-4 h-4" />
+            <span>Konfirmasi & Finalisasi ATP (SIAP)</span>
           </button>
           {saveNotice && (
             <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">
@@ -546,7 +659,7 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
           onClick={handleSaveAndNext}
           className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-900 hover:bg-blue-950 text-white py-2.5 px-6 rounded-xl text-sm font-semibold shadow-sm transition cursor-pointer"
         >
-          <span>Simpan & Lanjut ke Administrasi & Ekspor Dokumen (07)</span>
+          <span>Lanjut ke Administrasi & Ekspor Dokumen (07)</span>
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
@@ -568,42 +681,54 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
             </div>
 
             <form onSubmit={handleSaveItemModal} className="space-y-4">
+              {/* Select Canonical TP */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Rujukan Tujuan Pembelajaran (Canonical TP) <span className="text-rose-500">*</span>
+                  Pilih Tujuan Pembelajaran (TP Canonical) <span className="text-rose-500">*</span>
                 </label>
                 <select
                   required
                   value={currentItem.tpId || ''}
                   onChange={(e) => {
-                    const selId = e.target.value;
-                    const selectedTP = tp.items.find((t) => t.id === selId);
-                    if (selectedTP) {
+                    const selectedId = e.target.value;
+                    const matched = tp.items.find((t) => t.id === selectedId);
+                    if (matched) {
                       setCurrentItem({
                         ...currentItem,
-                        tpId: selectedTP.id,
-                        tpCode: selectedTP.code,
-                        tpStatement: selectedTP.statement,
-                        materialScope: selectedTP.contentScope || currentItem.materialScope,
-                        p3Dimensions: selectedTP.p3Dimensions || currentItem.p3Dimensions,
-                      });
-                    } else {
-                      setCurrentItem({
-                        ...currentItem,
-                        tpId: '',
+                        tpId: matched.id,
+                        tpCode: matched.code,
+                        tpStatement: matched.statement,
+                        materialScope: currentItem.materialScope || matched.contentScope || '',
+                        p3Dimensions: matched.p3Dimensions && matched.p3Dimensions.length > 0 ? matched.p3Dimensions : currentItem.p3Dimensions,
                       });
                     }
                   }}
-                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 bg-white font-medium text-slate-800"
+                  className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 font-medium"
                 >
-                  <option value="">-- Pilih Tujuan Pembelajaran Resmi --</option>
-                  {tp.items.map((t, tIdx) => (
-                    <option key={t.id} value={t.id}>
-                      {t.code || `TP ${tIdx + 1}`}: {t.statement.length > 80 ? `${t.statement.slice(0, 80)}...` : t.statement}
+                  <option value="">-- Pilih Butir TP Canonical --</option>
+                  {tp.items.map((tItem) => (
+                    <option key={tItem.id} value={tItem.id}>
+                      [{tItem.code}] {tItem.statement.substring(0, 90)}{tItem.statement.length > 90 ? '...' : ''}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {/* Read-only Canonical TP Statement */}
+              {currentItem.tpStatement && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase">
+                    <span>Rumusan TP Canonical</span>
+                    <span className="text-blue-700 font-semibold text-[10px] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                      Read-Only
+                    </span>
+                  </div>
+                  <p className="font-medium text-slate-900 leading-relaxed">{currentItem.tpStatement}</p>
+                  <p className="text-[10px] text-slate-500 italic">
+                    * Rumusan TP bersifat terpusat. Untuk mengubah kalimat TP, silakan kembali ke Tahap 05 (TP).
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -623,15 +748,22 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Kode TP
+                    Semester
                   </label>
-                  <input
-                    type="text"
-                    value={currentItem.tpCode || ''}
-                    onChange={(e) => setCurrentItem({ ...currentItem, tpCode: e.target.value })}
-                    placeholder="Contoh: TP 1.1"
-                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
-                  />
+                  <select
+                    value={currentItem.semester || ''}
+                    onChange={(e) =>
+                      setCurrentItem({
+                        ...currentItem,
+                        semester: e.target.value ? (parseInt(e.target.value, 10) as 1 | 2) : undefined,
+                      })
+                    }
+                    className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 font-medium"
+                  >
+                    <option value="">-- Belum ditentukan --</option>
+                    <option value={1}>Semester 1</option>
+                    <option value={2}>Semester 2</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
@@ -640,33 +772,17 @@ export const ATPManager: React.FC<ATPManagerProps> = ({
                   <input
                     type="number"
                     min="1"
-                    value={currentItem.allocatedJP ?? currentItem.jp ?? ''}
-                    placeholder="Opsional"
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? null : parseInt(e.target.value, 10);
-                      const resolved = val === null || isNaN(val) ? null : val;
+                    placeholder="Belum ada JP"
+                    value={currentItem.jp ?? ''}
+                    onChange={(e) =>
                       setCurrentItem({
                         ...currentItem,
-                        jp: resolved as any,
-                        allocatedJP: resolved,
-                      });
-                    }}
+                        jp: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                      })
+                    }
                     className="w-full text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Rumusan Tujuan Pembelajaran <span className="text-rose-500">*</span>
-                </label>
-                <textarea
-                  rows={2}
-                  required
-                  value={currentItem.tpStatement}
-                  onChange={(e) => setCurrentItem({ ...currentItem, tpStatement: e.target.value })}
-                  className="w-full text-sm p-3 rounded-xl border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-600 leading-relaxed"
-                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

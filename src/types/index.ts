@@ -147,9 +147,33 @@ export interface ActiveContext {
   regulationReference?: string;
 }
 
-export type CPVerificationStatus = 'verified' | 'unverified' | 'local_reference';
+export type WorkflowCompletionStatus = 'BELUM_DIMULAI' | 'DRAFT' | 'PERLU_DILENGKAPI' | 'SIAP';
+
+export type CPVerificationStatus =
+  | 'VERIFIED'
+  | 'UNVERIFIED'
+  | 'LOCAL_REFERENCE'
+  | 'SUPERSEDED'
+  | 'VERSION_CONFLICT'
+  | 'verified'
+  | 'unverified'
+  | 'local_reference';
+
+export function normalizeCPVerificationStatus(
+  status?: string
+): 'VERIFIED' | 'UNVERIFIED' | 'LOCAL_REFERENCE' | 'SUPERSEDED' | 'VERSION_CONFLICT' {
+  if (!status) return 'UNVERIFIED';
+  const u = status.toUpperCase().trim();
+  if (u === 'VERIFIED') return 'VERIFIED';
+  if (u === 'UNVERIFIED') return 'UNVERIFIED';
+  if (u === 'LOCAL_REFERENCE' || u === 'LOCAL' || u === 'DRAFT') return 'LOCAL_REFERENCE';
+  if (u === 'SUPERSEDED') return 'SUPERSEDED';
+  if (u === 'VERSION_CONFLICT' || u === 'AMBIGUOUS') return 'VERSION_CONFLICT';
+  return 'UNVERIFIED';
+}
 
 export interface CPSource {
+  id?: string;
   title: string;
   institution: string;
   documentYear?: string;
@@ -157,6 +181,9 @@ export interface CPSource {
   page?: string;
   retrievedAt: string;
   verificationStatus: CPVerificationStatus;
+  regulationId?: string;
+  regulationIds?: string[];
+  versionCode?: string;
 }
 
 export interface CPElem {
@@ -168,10 +195,15 @@ export interface CPElem {
 export interface CPData {
   id: string;
   academicSettingId: string;
+  cpId?: string;
+  cpVersion?: string;
+  regulationIds?: string[];
+  regulationSourceId?: string;
   generalDescription: string;
   elements: CPElem[];
   source?: CPSource;
   aiNotes?: string;
+  workflowStatus?: WorkflowCompletionStatus;
   lastEditedAt?: string;
   updatedAt: string;
 }
@@ -193,12 +225,23 @@ export interface CPAnalysisData {
   academicSettingId: string;
   workspaceId?: string;
   cpId?: string;
+  cpSourceId?: string;
+  cpRegulationIds?: string[];
+  cpVersion?: string;
+  academicYear?: string;
+  subjectCode?: string;
+  phase?: string;
   generalSummary?: string;
   items: CPAnalysisItem[];
   sourceCPVersion?: string;
   basedOnCpUpdatedAt?: string;
   revision?: number;
   status?: 'DRAFT' | 'FINAL';
+  generatedBy?: 'AI' | 'TEACHER' | 'AI_EDITED_BY_TEACHER';
+  generatedAt?: string;
+  workflowStatus?: WorkflowCompletionStatus;
+  needsReview?: boolean;
+  reviewReason?: string;
   provenance?: DataProvenance;
   updatedAt: string;
 }
@@ -209,12 +252,14 @@ export interface TPItem {
   cpAnalysisId?: string; // Lineage reference to CPAnalysisItem.id
   elementName?: string;
   statement: string; // Pernyataan Tujuan Pembelajaran
+  description?: string;
   competence: string; // Kompetensi / KKO yang dituju (misal: "Menganalisis", "Menjelaskan")
   contentScope: string; // Lingkup Materi / Konsep Inti
   p3Dimensions: string[]; // Dimensi Profil Pelajar Pancasila
   order: number;
   sequence?: number;
   status?: 'DRAFT' | 'FINAL';
+  cpAnalysisItemIds?: string[];
   provenance?: DataProvenance;
 }
 
@@ -222,12 +267,24 @@ export interface TPData {
   id: string;
   academicSettingId: string;
   workspaceId?: string;
+  cpId?: string;
+  cpVersion?: string;
+  cpRegulationIds?: string[];
+  cpAnalysisId?: string;
+  academicYear?: string;
+  subjectCode?: string;
+  phase?: string;
   items: TPItem[];
   basedOnCpUpdatedAt?: string;
   basedOnAnalysisUpdatedAt?: string;
   sourceAnalysisRevision?: number;
   revision?: number;
   status?: 'DRAFT' | 'FINAL';
+  workflowStatus?: WorkflowCompletionStatus;
+  needsReview?: boolean;
+  reviewReason?: string;
+  generatedBy?: 'AI' | 'TEACHER' | 'AI_EDITED_BY_TEACHER';
+  generatedAt?: string;
   provenance?: DataProvenance;
   updatedAt: string;
 }
@@ -241,7 +298,7 @@ export interface ATPItem {
   tpStatement?: string; // Resolved display statement
   materialScope?: string; // Resolved display material scope
   allocatedJP?: number | null; // Alokasi Jam Pelajaran (explicitly nullable! Unknown = null)
-  jp?: number; // Compatibility field
+  jp?: number | null; // Compatibility field
   semester?: 1 | 2 | null;
   p3Dimensions?: string[]; // Profil Pelajar Pancasila
   assessmentPlan?: string; // Asesmen Awal, Formatif, Sumatif
@@ -255,13 +312,26 @@ export interface ATPData {
   id: string;
   academicSettingId: string;
   workspaceId?: string;
+  tpId?: string;
+  tpDataId?: string;
+  academicYear?: string;
+  subjectCode?: string;
+  phase?: string;
   rationale?: string; // Rasionalisasi Alur Pembelajaran
   items: ATPItem[];
   totalJP?: number;
+  knownTotalJP?: number;
+  hasUnknownJP?: boolean;
+  allocationComplete?: boolean;
   basedOnTpUpdatedAt?: string;
   sourceTpRevision?: number;
   revision?: number;
   status?: 'DRAFT' | 'FINAL';
+  workflowStatus?: WorkflowCompletionStatus;
+  needsReview?: boolean;
+  reviewReason?: string;
+  generatedBy?: 'AI' | 'TEACHER' | 'AI_EDITED_BY_TEACHER';
+  generatedAt?: string;
   provenance?: DataProvenance;
   updatedAt: string;
 }

@@ -19,6 +19,8 @@ import {
   AlertTriangle,
   Brain,
   Layers,
+  CheckCircle2,
+  Info,
 } from 'lucide-react';
 import {
   TPData,
@@ -28,9 +30,11 @@ import {
   AcademicSetting,
   TeacherProfile,
   ActiveContext,
+  normalizeCPVerificationStatus,
 } from '../types';
 import { P3_DIMENSIONS } from '../data/curriculumDefaults';
 import { generateTPWithAI, refineTextWithAI } from '../services/aiService';
+import { validateTPDataWorkflow } from '../services/cpWorkflowService';
 
 interface TPManagerProps {
   tp: TPData;
@@ -73,7 +77,25 @@ export const TPManager: React.FC<TPManagerProps> = ({
     (cp.generalDescription && cp.generalDescription.trim().length > 0) ||
     (cp.elements && cp.elements.length > 0);
 
+  const cpVerStatus = cp.source ? normalizeCPVerificationStatus(cp.source.verificationStatus) : 'UNVERIFIED';
+  const isCpUnusable = cpVerStatus === 'SUPERSEDED' || cpVerStatus === 'VERSION_CONFLICT';
   const hasCPAnalysis = !!(cpAnalysis?.items && cpAnalysis.items.length > 0);
+
+  // Workflow validation
+  const validation = validateTPDataWorkflow(
+    {
+      ...tp,
+      items,
+      academicSettingId: tp.academicSettingId || academicSetting.id,
+      cpId: tp.cpId || cp.id,
+      academicYear: tp.academicYear || context.academicYear,
+      subjectCode: tp.subjectCode || context.subject,
+      phase: tp.phase || context.phase,
+    },
+    cp,
+    cpAnalysis,
+    academicSetting
+  );
 
   // Integrity checks for stale upstream
   const isCPOutdated =
@@ -84,57 +106,53 @@ export const TPManager: React.FC<TPManagerProps> = ({
     new Date(cp.updatedAt).getTime() > new Date(tp.basedOnCpUpdatedAt).getTime() + 1000;
 
   const isAnalysisOutdated =
-    hasCPAnalysis &&
+    cpAnalysis &&
     items.length > 0 &&
     tp.basedOnAnalysisUpdatedAt &&
-    cpAnalysis?.updatedAt &&
+    cpAnalysis.updatedAt &&
     new Date(cpAnalysis.updatedAt).getTime() > new Date(tp.basedOnAnalysisUpdatedAt).getTime() + 1000;
 
-  // Import directly from CP Analysis suggested TP
-  const handleImportFromCPAnalysis = () => {
-    if (!hasCPAnalysis || !cpAnalysis?.items) {
-      alert('Data Analisis CP belum tersedia.');
-      return;
-    }
+  const needsReview = tp.needsReview || isCPOutdated || isAnalysisOutdated || isCpUnusable;
 
-    if (
-      items.length > 0 &&
-      !confirm('Menerapkan rumusan dari Analisis CP akan menggantikan daftar TP saat ini. Lanjutkan?')
-    ) {
-      return;
-    }
-
-    const gradeNum = context.grade.replace(/[^0-9]/g, '') || '4';
-    const imported: TPItem[] = cpAnalysis.items.map((ana, idx) => ({
-      id: `tp-ana-${Date.now()}-${idx + 1}`,
-      cpAnalysisId: ana.id,
-      code: `TP ${gradeNum}.${idx + 1}`,
-      elementName: ana.elementName || 'Umum',
-      statement: ana.suggestedTp || `Peserta didik mampu ${ana.cpCompetence || 'memahami'} ${ana.materialScope || 'materi pokok'}.`,
-      competence: ana.cpCompetence || 'Memahami',
-      contentScope: ana.materialScope || 'Materi Pokok',
-      p3Dimensions: ['Bernalar Kritis', 'Mandiri'],
-      order: idx + 1,
-    }));
-
-    setItems(imported);
-    const updated: TPData = {
+  // Handle Confirm Alignment
+  const handleConfirmAlignment = () => {
+    const updatedItems = items.map((item, idx) => ({ ...item, order: idx + 1 }));
+    const candidateTP: TPData = {
       ...tp,
       academicSettingId: academicSetting.id,
-      items: imported,
+      cpId: cp.id,
+      cpVersion: cp.cpVersion ?? cp.source?.versionCode,
+      cpRegulationIds: cp.source?.regulationIds || cp.regulationIds || [],
+      cpAnalysisId: cpAnalysis?.id,
+      academicYear: context.academicYear,
+      subjectCode: context.subject,
+      phase: context.phase,
+      items: updatedItems,
+      needsReview: false,
+      reviewReason: undefined,
       basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
-      basedOnAnalysisUpdatedAt: cpAnalysis.updatedAt || new Date().toISOString(),
+      basedOnAnalysisUpdatedAt: cpAnalysis?.updatedAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    onSaveTP(updated);
+    const val = validateTPDataWorkflow(candidateTP, cp, cpAnalysis, academicSetting);
+    const updatedTP: TPData = {
+      ...candidateTP,
+      workflowStatus: val.status,
+    };
+    onSaveTP(updatedTP);
     setSaveNotice(true);
     setTimeout(() => setSaveNotice(false), 2500);
   };
 
-  // Handle AI Generate TP from CP + CP Analysis
+  // Handle AI Generate TP from CP & CP Analysis
   const handleGenerateAI = async () => {
     if (!hasCP) {
       alert('Data CP belum tersedia. Harap isi CP pada tahap 03 terlebih dahulu.');
+      return;
+    }
+
+    if (isCpUnusable) {
+      alert(`Capaian Pembelajaran (CP) rujukan berstatus ${cpVerStatus}. Mohon sesuaikan data CP pada Tahap 03 sebelum merumuskan TP.`);
       return;
     }
 
@@ -154,25 +172,40 @@ export const TPManager: React.FC<TPManagerProps> = ({
       const generated = await generateTPWithAI({
         cpGeneral: cp.generalDescription,
         cpElements: cp.elements || [],
-        cpAnalysis: cpAnalysis?.items,
+        cpAnalysisItems: cpAnalysis?.items || [],
         subject: context.subject,
         grade: context.grade,
         phase: context.phase,
         curriculum: context.curriculum,
-        count: cpAnalysis?.items?.length ? Math.max(cpAnalysis.items.length, 4) : 4,
+        count: 4,
       });
 
       setItems(generated);
-      // Auto save
-      const updated: TPData = {
+      const candidateTP: TPData = {
         ...tp,
         academicSettingId: academicSetting.id,
+        cpId: cp.id,
+        cpVersion: cp.cpVersion ?? cp.source?.versionCode,
+        cpRegulationIds: cp.source?.regulationIds || cp.regulationIds || [],
+        cpAnalysisId: cpAnalysis?.id,
+        academicYear: context.academicYear,
+        subjectCode: context.subject,
+        phase: context.phase,
         items: generated,
+        generatedBy: 'AI',
+        generatedAt: new Date().toISOString(),
+        needsReview: false,
+        reviewReason: undefined,
         basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
         basedOnAnalysisUpdatedAt: cpAnalysis?.updatedAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
-      onSaveTP(updated);
+      const val = validateTPDataWorkflow(candidateTP, cp, cpAnalysis, academicSetting);
+      const updatedTP: TPData = {
+        ...candidateTP,
+        workflowStatus: val.status,
+      };
+      onSaveTP(updatedTP);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Gagal menghasilkan TP dengan AI';
       setGenerationError(msg);
@@ -182,15 +215,37 @@ export const TPManager: React.FC<TPManagerProps> = ({
   };
 
   const handleSave = () => {
-    const updated: TPData = {
+    const updatedItems = items.map((item, idx) => ({ ...item, order: idx + 1 }));
+    const nextGeneratedBy =
+      tp.generatedBy === 'AI' ? 'AI_EDITED_BY_TEACHER' : tp.generatedBy || 'TEACHER';
+
+    const testTP: TPData = {
       ...tp,
       academicSettingId: academicSetting.id,
-      items: items.map((item, idx) => ({ ...item, order: idx + 1 })),
+      cpId: cp.id,
+      cpVersion: cp.cpVersion ?? cp.source?.versionCode,
+      cpRegulationIds: cp.source?.regulationIds || cp.regulationIds || [],
+      cpAnalysisId: cpAnalysis?.id,
+      academicYear: context.academicYear,
+      subjectCode: context.subject,
+      phase: context.phase,
+      items: updatedItems,
+      generatedBy: nextGeneratedBy,
       basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
       basedOnAnalysisUpdatedAt: cpAnalysis?.updatedAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    onSaveTP(updated);
+
+    const val = validateTPDataWorkflow(testTP, cp, cpAnalysis, academicSetting);
+
+    const updatedTP: TPData = {
+      ...testTP,
+      workflowStatus: val.status,
+      needsReview: false,
+      reviewReason: undefined,
+    };
+
+    onSaveTP(updatedTP);
     setSaveNotice(true);
     setTimeout(() => setSaveNotice(false), 2500);
   };
@@ -204,7 +259,7 @@ export const TPManager: React.FC<TPManagerProps> = ({
     onNextStep();
   };
 
-  // Move items up / down
+  // Move items up / down (Preserves stable item.id)
   const handleMove = (index: number, direction: 'up' | 'down') => {
     const newItems = [...items];
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
@@ -214,26 +269,30 @@ export const TPManager: React.FC<TPManagerProps> = ({
     newItems[index] = newItems[targetIdx];
     newItems[targetIdx] = temp;
 
-    setItems(newItems);
+    const reordered = newItems.map((it, idx) => ({ ...it, order: idx + 1 }));
+    setItems(reordered);
   };
 
   const handleDelete = (id: string) => {
     if (confirm('Hapus butir Tujuan Pembelajaran ini?')) {
-      setItems(items.filter((i) => i.id !== id));
+      const filtered = items.filter((i) => i.id !== id);
+      const reordered = filtered.map((it, idx) => ({ ...it, order: idx + 1 }));
+      setItems(reordered);
     }
   };
 
   const handleOpenAdd = () => {
     const nextNum = items.length + 1;
     const gradeNum = context.grade.replace(/[^0-9]/g, '') || '4';
+    const newId = `tp-item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     setCurrentItem({
-      id: `tp-${Date.now()}`,
+      id: newId,
       code: `TP ${gradeNum}.${nextNum}`,
       elementName: cp.elements?.[0]?.name || 'Umum',
       statement: '',
       competence: '',
       contentScope: '',
-      p3Dimensions: ['Bernalar Kritis', 'Mandiri'],
+      p3Dimensions: [],
       order: nextNum,
     });
     setIsEditing(true);
@@ -246,20 +305,28 @@ export const TPManager: React.FC<TPManagerProps> = ({
 
   const handleSaveItemModal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentItem || !currentItem.statement.trim()) {
+    if (!currentItem || (!currentItem.statement.trim() && !(currentItem.description || '').trim())) {
       alert('Rumusan Tujuan Pembelajaran wajib diisi.');
       return;
     }
 
-    const exists = items.some((i) => i.id === currentItem.id);
+    const stmt = (currentItem.statement || currentItem.description || '').trim();
+    const finalItem: TPItem = {
+      ...currentItem,
+      statement: stmt,
+      description: stmt,
+    };
+
+    const exists = items.some((i) => i.id === finalItem.id);
     let newItems: TPItem[];
     if (exists) {
-      newItems = items.map((i) => (i.id === currentItem.id ? currentItem : i));
+      newItems = items.map((i) => (i.id === finalItem.id ? finalItem : i));
     } else {
-      newItems = [...items, currentItem];
+      newItems = [...items, finalItem];
     }
 
-    setItems(newItems);
+    const reordered = newItems.map((it, idx) => ({ ...it, order: idx + 1 }));
+    setItems(reordered);
     setIsEditing(false);
     setCurrentItem(null);
   };
@@ -318,45 +385,64 @@ export const TPManager: React.FC<TPManagerProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Integrity Alert if CP was modified */}
-      {isCPOutdated && (
-        <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex items-start gap-3 text-amber-900 text-xs">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="font-bold text-sm text-amber-950">
-              Pembaruan Terdeteksi pada Capaian Pembelajaran (CP)
-            </h4>
-            <p className="text-amber-800">
-              Data CP telah diperbarui setelah daftar TP ini dibuat. Anda dapat meninjau butir TP di bawah atau klik tombol <strong>"Generate TP dari CP (AI)"</strong> untuk menyelaraskan kembali perumusan tujuan secara otomatis.
-            </p>
+      {/* Integrity Alert / Review Warning */}
+      {needsReview && (
+        <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 text-xs shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-bold text-sm text-amber-950">
+                Pembaruan / Peninjauan Diperlukan pada TP
+              </h4>
+              <p className="text-amber-800">
+                {tp.reviewReason ||
+                  (isCPOutdated
+                    ? 'Teks Capaian Pembelajaran (CP) telah diperbarui sejak TP ini dirumuskan.'
+                    : isAnalysisOutdated
+                    ? 'Data Analisis CP telah diperbarui sejak TP ini dirumuskan.'
+                    : isCpUnusable
+                    ? `CP Rujukan berstatus ${cpVerStatus}. Periksa kesesuaian CP terlebih dahulu.`
+                    : 'Mohon tinjau kesesuaian butir TP di bawah ini.')}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Integrity Alert if CP Analysis was modified */}
-      {isAnalysisOutdated && (
-        <div className="bg-amber-50 border border-amber-300 p-4 rounded-2xl flex items-start gap-3 text-amber-900 text-xs">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <h4 className="font-bold text-sm text-amber-950">
-              Pembaruan Terdeteksi pada Analisis CP (Hulu)
-            </h4>
-            <p className="text-amber-800">
-              Data Analisis CP telah diperbarui. Disarankan untuk meninjau kembali keselarasan TP atau klik <strong>"Terapkan dari Analisis CP"</strong> untuk sinkronisasi.
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={handleConfirmAlignment}
+            className="inline-flex items-center gap-1.5 bg-amber-700 hover:bg-amber-800 text-white px-3.5 py-2 rounded-xl font-semibold shadow-xs transition shrink-0 self-start sm:self-auto cursor-pointer"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Konfirmasi & Tandai Sesuai</span>
+          </button>
         </div>
       )}
 
       {/* Header Info */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs">
+      <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="w-6 h-6 rounded-md bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center">
                 05
               </span>
               <h3 className="text-lg font-bold text-slate-900">Perumusan Tujuan Pembelajaran (TP)</h3>
+              {/* Workflow status badge */}
+              <span
+                className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+                  validation.isSiap
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                    : 'bg-amber-50 text-amber-700 border-amber-300'
+                }`}
+              >
+                {validation.isSiap ? 'SIAP (VALID)' : 'PERLU DILENGKAPI'}
+              </span>
+              {/* Provenance source badge */}
+              {tp.generatedBy && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-300 flex items-center gap-1">
+                  {tp.generatedBy === 'AI' && <Sparkles className="w-3 h-3 text-amber-500" />}
+                  {tp.generatedBy === 'AI' ? 'DRAF AI' : tp.generatedBy === 'AI_EDITED_BY_TEACHER' ? 'AI + EDIT GURU' : 'MANUAL GURU'}
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 mt-1">
               Rumuskan butir-butir Tujuan Pembelajaran yang diturunkan dari Capaian Pembelajaran (CP) dan Analisis CP untuk <strong>{context.subject}</strong> ({context.grade} - {context.phase}).
@@ -365,22 +451,11 @@ export const TPManager: React.FC<TPManagerProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
-            {hasCPAnalysis && (
-              <button
-                id="btn-import-from-analysis"
-                onClick={handleImportFromCPAnalysis}
-                className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer"
-                title="Terapkan rumusan TP yang telah dihasilkan dari tahap Analisis CP"
-              >
-                <Brain className="w-4 h-4 text-emerald-600" />
-                <span>Terapkan dari Analisis CP</span>
-              </button>
-            )}
-
             <button
               id="btn-ai-generate-tp"
               onClick={handleGenerateAI}
-              disabled={isGenerating}
+              disabled={isGenerating || isCpUnusable}
+              title={isCpUnusable ? `CP Berstatus ${cpVerStatus}` : 'Generate TP dengan AI'}
               className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-700 to-indigo-700 hover:from-blue-800 hover:to-indigo-800 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50 self-start sm:self-auto"
             >
               {isGenerating ? (
@@ -399,8 +474,24 @@ export const TPManager: React.FC<TPManagerProps> = ({
         </div>
 
         {generationError && (
-          <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-            ⚠️ {generationError}
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{generationError}</span>
+          </div>
+        )}
+
+        {/* Validation Issues Alert */}
+        {!validation.isSiap && validation.issues.length > 0 && (
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-amber-950">
+              <Info className="w-4 h-4 text-amber-600" />
+              <span>Catatan Kelengkapan TP:</span>
+            </div>
+            <ul className="list-disc pl-5 space-y-0.5 text-amber-800">
+              {validation.issues.map((iss, idx) => (
+                <li key={idx}>{iss}</li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

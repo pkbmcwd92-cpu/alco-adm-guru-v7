@@ -13,6 +13,8 @@ import {
   BookOpen,
   Info,
   Lightbulb,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   CPData,
@@ -21,7 +23,9 @@ import {
   AcademicSetting,
   TeacherProfile,
   ActiveContext,
+  normalizeCPVerificationStatus,
 } from '../types';
+import { validateCPAnalysisDataWorkflow } from '../services/cpWorkflowService';
 
 interface CPAnalysisManagerProps {
   cp: CPData;
@@ -112,13 +116,55 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
     setItems(items.filter((it) => it.id !== id));
   };
 
+  const hasCP =
+    (cp.generalDescription && cp.generalDescription.trim().length > 0) ||
+    (cp.elements && cp.elements.length > 0);
+
+  const cpVerStatus = cp.source
+    ? normalizeCPVerificationStatus(cp.source.verificationStatus)
+    : 'UNVERIFIED';
+
+  const isCPOutdated =
+    hasCP &&
+    items.length > 0 &&
+    cpAnalysis?.basedOnCpUpdatedAt &&
+    cp.updatedAt &&
+    new Date(cp.updatedAt).getTime() > new Date(cpAnalysis.basedOnCpUpdatedAt).getTime() + 1000;
+
+  const needsReview = cpAnalysis?.needsReview || isCPOutdated;
+
+  const validation = validateCPAnalysisDataWorkflow(
+    {
+      ...cpAnalysis,
+      id: cpAnalysis?.id || `cpanalysis-${academicSetting.id}`,
+      academicSettingId: academicSetting.id,
+      items,
+      generalSummary,
+    },
+    cp
+  );
+
   const handleSave = () => {
+    const nextGeneratedBy =
+      cpAnalysis?.generatedBy === 'AI' ? 'AI_EDITED_BY_TEACHER' : cpAnalysis?.generatedBy || 'TEACHER';
+
     const updated: CPAnalysisData = {
       id: cpAnalysis?.id || `cpanalysis-${academicSetting.id}`,
       academicSettingId: academicSetting.id,
       cpId: cp.id,
+      cpSourceId: cp.source?.id || cp.source?.title,
+      cpRegulationIds: cp.source?.regulationIds || cp.regulationIds || [],
+      cpVersion: cp.cpVersion ?? cp.source?.versionCode,
+      academicYear: context.academicYear,
+      subjectCode: context.subject,
+      phase: context.phase,
       generalSummary,
       items,
+      generatedBy: nextGeneratedBy,
+      workflowStatus: validation.isSiap ? 'SIAP' : 'PERLU_DILENGKAPI',
+      needsReview: false,
+      reviewReason: undefined,
+      basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     onSaveCPAnalysis(updated);
@@ -142,7 +188,29 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
       order: idx + 1,
     }));
     setItems(derived);
-    handleSave();
+    const updated: CPAnalysisData = {
+      id: cpAnalysis?.id || `cpanalysis-${academicSetting.id}`,
+      academicSettingId: academicSetting.id,
+      cpId: cp.id,
+      cpSourceId: cp.source?.id || cp.source?.title,
+      cpRegulationIds: cp.source?.regulationIds || cp.regulationIds || [],
+      cpVersion: cp.cpVersion ?? cp.source?.versionCode,
+      academicYear: context.academicYear,
+      subjectCode: context.subject,
+      phase: context.phase,
+      generalSummary,
+      items: derived,
+      generatedBy: 'AI',
+      generatedAt: new Date().toISOString(),
+      workflowStatus: 'SIAP',
+      needsReview: false,
+      reviewReason: undefined,
+      basedOnCpUpdatedAt: cp.updatedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    onSaveCPAnalysis(updated);
+    setShowSavedToast(true);
+    setTimeout(() => setShowSavedToast(false), 2500);
   };
 
   return (
@@ -150,13 +218,24 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
       {/* Header card */}
       <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-1 rounded-md">
               Langkah 04 — Kurikulum Merdeka
             </span>
             <span className="text-xs text-slate-500 font-medium">
               {academicSetting.subject} • {academicSetting.grade} ({academicSetting.phase})
             </span>
+            {validation.isSiap ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                SIAP
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                PERLU DILENGKAPI
+              </span>
+            )}
           </div>
           <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-2 flex items-center gap-2">
             <Brain className="w-6 h-6 text-blue-600" />
@@ -165,6 +244,31 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
           <p className="text-sm text-slate-600 mt-1">
             Bedah kompetensi (KKO) dan lingkup materi esensial dari setiap elemen CP sebagai jembatan perumusan Tujuan Pembelajaran (TP).
           </p>
+
+          {/* Provenance and verification info */}
+          <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-slate-500 font-medium">Rujukan CP:</span>
+            {cpVerStatus === 'VERIFIED' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                Terverifikasi Resmi: {cp.source?.institution || 'BSKAP'}
+              </span>
+            ) : cpVerStatus === 'LOCAL_REFERENCE' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-medium">
+                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                Referensi Lokal
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 font-medium">
+                Draft Mandiri
+              </span>
+            )}
+            {cp.source?.title && (
+              <span className="text-slate-500 truncate max-w-sm" title={cp.source.title}>
+                ({cp.source.title})
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -186,6 +290,18 @@ export const CPAnalysisManager: React.FC<CPAnalysisManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {needsReview && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl flex items-start gap-3 text-xs text-amber-900 shadow-xs">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <span className="font-bold text-amber-950">Perhatian: Capaian Pembelajaran (CP) Mengalami Perubahan</span>
+            <p className="text-amber-800">
+              Dokumen Capaian Pembelajaran (CP) rujukan telah diperbarui sejak analisis ini dibuat. Mohon tinjau kembali bedah kompetensi dan simpan ulang untuk memperbarui status keselarasan menuju tahap TP.
+            </p>
+          </div>
+        </div>
+      )}
 
       {showSavedToast && (
         <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs font-semibold shadow-xs">

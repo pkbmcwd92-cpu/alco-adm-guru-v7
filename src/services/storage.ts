@@ -28,6 +28,7 @@ import {
   CPAnalysisData,
 } from '../types';
 import { getCurriculumTypeFromSetting, isK13, isMerdeka } from './curriculumRouter';
+import { validateATPReferences, normalizeATPReferences, validateATPDataWorkflow } from './cpWorkflowService';
 import {
   INITIAL_PROFILES,
   INITIAL_SCHOOL,
@@ -1525,6 +1526,18 @@ export function saveCPAnalysis(analysis: CPAnalysisData): void {
     list.push(updatedAnalysis);
   }
   current.cpAnalyses = list;
+
+  // Invalidate TP if CP Analysis updated
+  const tpIdx = (current.tps || []).findIndex((t) => t.academicSettingId === analysis.academicSettingId);
+  if (tpIdx >= 0 && current.tps[tpIdx].items && current.tps[tpIdx].items.length > 0) {
+    current.tps[tpIdx] = {
+      ...current.tps[tpIdx],
+      needsReview: true,
+      reviewReason: 'Analisis CP rujukan telah diperbarui.',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   saveAppStorage(current);
 }
 
@@ -1564,6 +1577,18 @@ export function saveCP(cp: CPData): void {
   } else {
     current.cps.push(updatedCP);
   }
+
+  // Invalidate TP if CP updated
+  const tpIdx = (current.tps || []).findIndex((t) => t.academicSettingId === cp.academicSettingId);
+  if (tpIdx >= 0 && current.tps[tpIdx].items && current.tps[tpIdx].items.length > 0) {
+    current.tps[tpIdx] = {
+      ...current.tps[tpIdx],
+      needsReview: true,
+      reviewReason: 'Capaian Pembelajaran (CP) rujukan telah diperbarui.',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   saveAppStorage(current);
 }
 
@@ -1579,15 +1604,51 @@ export function saveTP(tp: TPData): void {
   } else {
     current.tps.push(updatedTP);
   }
+
+  // Cascading invalidation: Check if ATP references to TP items are still valid
+  const atpIdx = (current.atps || []).findIndex((a) => a.academicSettingId === tp.academicSettingId);
+  if (atpIdx >= 0 && current.atps[atpIdx].items && current.atps[atpIdx].items.length > 0) {
+    const atpObj = current.atps[atpIdx];
+    const val = validateATPDataWorkflow(atpObj, updatedTP);
+    current.atps[atpIdx] = {
+      ...atpObj,
+      workflowStatus: val.status,
+      needsReview: true,
+      reviewReason: 'Tujuan Pembelajaran (TP) acuan telah diperbarui, alur ATP perlu ditinjau ulang.',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   saveAppStorage(current);
 }
 
 export function saveATP(atp: ATPData): void {
   const current = loadAppStorage();
-  const totalJP = (atp?.items || []).reduce((acc, curr) => acc + (Number(curr.jp) || 0), 0);
+  const tp = current.tps.find((t) => t.academicSettingId === atp.academicSettingId);
+  const normalizedATP = normalizeATPReferences(atp, tp);
+
+  const val = validateATPDataWorkflow(normalizedATP, tp);
+  const hasUnknownJP = (normalizedATP?.items || []).some((item) => item.jp === undefined || item.jp === null);
+  const knownTotalJP = (normalizedATP?.items || []).reduce(
+    (acc, curr) => acc + (curr.jp !== undefined && curr.jp !== null ? Number(curr.jp) : 0),
+    0
+  );
+
   const updatedATP: ATPData = {
-    ...atp,
-    totalJP,
+    ...normalizedATP,
+    tpDataId: tp?.id || normalizedATP.tpDataId || normalizedATP.tpId,
+    tpId: tp?.id || normalizedATP.tpId,
+    academicYear: atp.academicYear || tp?.academicYear,
+    subjectCode: atp.subjectCode || tp?.subjectCode,
+    phase: atp.phase || tp?.phase,
+    totalJP: knownTotalJP,
+    knownTotalJP,
+    hasUnknownJP,
+    allocationComplete: !hasUnknownJP,
+    workflowStatus: val.status,
+    needsReview: val.issues.length > 0 ? true : false,
+    reviewReason: val.issues.length > 0 ? val.issues.join('; ') : undefined,
+    basedOnTpUpdatedAt: tp?.updatedAt || atp.basedOnTpUpdatedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 

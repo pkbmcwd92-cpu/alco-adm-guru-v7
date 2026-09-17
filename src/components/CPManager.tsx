@@ -20,7 +20,7 @@ import {
   Search,
   CheckCircle2,
 } from 'lucide-react';
-import { CPData, CPElem, AcademicSetting, TeacherProfile, ActiveContext, CPSource, CPVerificationStatus } from '../types';
+import { CPData, CPElem, AcademicSetting, TeacherProfile, ActiveContext, CPSource, CPVerificationStatus, normalizeCPVerificationStatus } from '../types';
 import { cpSourceRepository, CPSourceSearchResult } from '../services/cpSourceRepository';
 import { analyzeCPWithAI, CPAnalysisResult } from '../services/aiService';
 
@@ -209,21 +209,46 @@ export const CPManager: React.FC<CPManagerProps> = ({
         <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-slate-500 font-semibold">Status Sumber CP:</span>
-            {source?.verificationStatus === 'verified' ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Terverifikasi Resmi: {source.institution}</span>
-              </span>
-            ) : source?.verificationStatus === 'local_reference' ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-medium">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                <span>Referensi Lokal (Belum Terverifikasi SK BSKAP)</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 font-medium">
-                <span>Input Mandiri / Draft</span>
-              </span>
-            )}
+            {(() => {
+              const status = normalizeCPVerificationStatus(source?.verificationStatus);
+              if (status === 'VERIFIED') {
+                return (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Terverifikasi Resmi: {source?.institution}</span>
+                  </span>
+                );
+              }
+              if (status === 'LOCAL_REFERENCE') {
+                return (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Referensi Lokal (Belum Terverifikasi SK BSKAP/BKPDM)</span>
+                  </span>
+                );
+              }
+              if (status === 'SUPERSEDED') {
+                return (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Dokumen Kedaluwarsa / Digantikan</span>
+                  </span>
+                );
+              }
+              if (status === 'VERSION_CONFLICT') {
+                return (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-50 text-purple-800 border border-purple-200 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Konflik Versi CP (Ambiguous)</span>
+                  </span>
+                );
+              }
+              return (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 font-medium">
+                  <span>Input Mandiri / Draft</span>
+                </span>
+              );
+            })()}
           </div>
 
           {source?.title && (
@@ -530,7 +555,8 @@ export const CPManager: React.FC<CPManagerProps> = ({
                 <div className="space-y-3">
                   {searchResults.map((item) => {
                     const isSelected = selectedResult?.id === item.id;
-                    const isVerified = item.verificationStatus === 'verified';
+                    const itemVerStatus = normalizeCPVerificationStatus(item.verificationStatus);
+                    const isVerified = itemVerStatus === 'VERIFIED';
 
                     return (
                       <div

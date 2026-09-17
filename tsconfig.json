@@ -27,5 +27,17 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src",
+    "scripts",
+    "server",
+    "server.ts"
+  ],
+  "exclude": [
+    "alco-adm-guru-v7-donor-pack",
+    "**/_DONOR_V6_REFERENCE/**",
+    "node_modules",
+    "dist"
+  ]
 }

@@ -1,4 +1,4 @@
-import { ActiveContext, CPSource, CPElem, CPVerificationStatus } from '../types';
+import { ActiveContext, CPSource, CPElem, CPVerificationStatus, normalizeCPVerificationStatus } from '../types';
 import { CP_PRESETS, CPSamplePreset } from '../data/curriculumDefaults';
 
 export interface CPSourceSearchResult {
@@ -98,7 +98,7 @@ class CPSourceRepository {
           documentYear: item.sourceInfo.documentYear || '2024/2025',
           url: item.sourceInfo.url,
           page: item.sourceInfo.page,
-          verificationStatus: item.sourceInfo.verificationStatus,
+          verificationStatus: normalizeCPVerificationStatus(item.sourceInfo.verificationStatus),
           generalDescription: item.generalDescription,
           elements: item.elements.map((el, elIdx) => ({
             id: `elem-${index + 1}-${elIdx + 1}`,
