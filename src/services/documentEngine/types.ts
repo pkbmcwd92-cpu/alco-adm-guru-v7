@@ -22,6 +22,8 @@ import {
   K13Analysis,
   K13KKM,
   LearningPlan,
+  AssessmentPlan,
+  AssessmentPackage,
   DocumentMode,
   DocumentSnapshot,
 } from '../../types';
@@ -55,6 +57,9 @@ export interface DocumentGenerationContext {
   k13KKM?: K13KKM;
   learningPlans?: LearningPlan[];
   activeLearningPlanId?: string;
+  assessmentPlans?: AssessmentPlan[];
+  assessmentPackages?: AssessmentPackage[];
+  activeAssessmentPackageId?: string;
 }
 
 export type ZipExportFormat = 'pdf' | 'docx' | 'both';

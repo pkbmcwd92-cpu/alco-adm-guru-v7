@@ -19,24 +19,21 @@ import {
   createTableDataCell,
   createSignoffBlock,
 } from '../docxStyles';
+import {
+  validateAssessmentPackage,
+} from '../../assessmentPackageService';
+import {
+  AssessmentPackage,
+  WrittenAssessmentInstrument,
+  ObservationAssessmentInstrument,
+  PerformanceAssessmentInstrument,
+} from '../../../types';
 
 export async function generateAssessment(context: DocumentGenerationContext): Promise<GeneratedDocumentResult> {
-  const { school, profile, academicSetting, atp, tp } = context;
+  const { school, profile, academicSetting, tp, k13Analysis, assessmentCriteria } = context;
   const isBlankMode = context.documentMode === 'blank';
 
   const docChildren: (Paragraph | Table)[] = [];
-
-  // 1. Header
-  docChildren.push(
-    ...createDocumentHeader(
-      isBlankMode ? 'PANDUAN, INSTRUMEN ASESMEN & RUBRIK PENILAIAN (FORMAT KOSONG)' : 'PANDUAN, INSTRUMEN ASESMEN & RUBRIK PENILAIAN',
-      `${academicSetting.curriculum} — ${academicSetting.subject} ${academicSetting.grade}`
-    )
-  );
-
-  // 2. Identity Metadata
-  docChildren.push(createIdentityMetadataTable(school, profile, academicSetting));
-  docChildren.push(new Paragraph({ spacing: { after: 180 } }));
 
   // Helper Section Heading
   const addSectionHeading = (title: string) => {
@@ -57,181 +54,297 @@ export async function generateAssessment(context: DocumentGenerationContext): Pr
     );
   };
 
-  // I. KISI-KISI ASESMEN
-  addSectionHeading('I. KISI-KISI ASESMEN PEMBELAJARAN (IKTP & TEKNIK PENILAIAN)');
-
-  const kisiHeader = new TableRow({
-    tableHeader: true,
-    children: [
-      createTableHeaderCell('No', 6),
-      createTableHeaderCell('Kode & Tujuan Pembelajaran', 34, AlignmentType.LEFT),
-      createTableHeaderCell('Indikator Ketercapaian TP (IKTP)', 30, AlignmentType.LEFT),
-      createTableHeaderCell('Teknik Asesmen', 15),
-      createTableHeaderCell('Bentuk Instrumen', 15),
-    ],
-  });
-
-  const tpItems = tp?.items && tp.items.length > 0 ? tp.items : (atp?.items || []).map((a) => ({
-    code: a.tpCode,
-    statement: a.tpStatement,
-    competence: 'Memahami & Mengaplikasikan',
-    contentScope: a.materialScope,
-  }));
-
-  const kisiRows = isBlankMode
-    ? Array.from({ length: 8 }, (_, idx) =>
-        new TableRow({
-          children: [
-            createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
-            createTableDataCell(`[TP ${idx + 1}] .....................................................................`, 34),
-            createTableDataCell('..........................................................................................', 30),
-            createTableDataCell('....................', 15, AlignmentType.CENTER),
-            createTableDataCell('....................', 15, AlignmentType.CENTER),
-          ],
-        })
-      )
-    : tpItems.map((item, idx) => {
-        return new TableRow({
-          children: [
-            createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
-            new TableCell({
-              width: { size: 34, type: WidthType.PERCENTAGE },
-              margins: { top: 100, bottom: 100, left: 120, right: 120 },
-              children: [
-                new Paragraph({
-                  children: [
-                    new TextRun({ text: `[${item.code}] `, bold: true, size: 19, font: 'Arial', color: '1E3A8A' }),
-                    new TextRun({ text: item.statement, size: 19, font: 'Arial' }),
-                  ],
-                }),
-              ],
-            }),
-            createTableDataCell(
-              `Peserta didik mampu menunjukkan pemahaman mengenai ${item.contentScope || 'materi pokok'} dan menerapkannya dengan tepat.`,
-              30
-            ),
-            createTableDataCell('Tes Tulis & Kinerja', 15, AlignmentType.CENTER),
-            createTableDataCell('Soal Uraian / Lembar Observasi', 15, AlignmentType.CENTER),
-          ],
-        });
-      });
-
-  const kisiTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [kisiHeader, ...kisiRows],
-  });
-
-  docChildren.push(kisiTable);
-
-  // II. INSTRUMEN ASESMEN FORMATIF
-  addSectionHeading('II. INSTRUMEN ASESMEN FORMATIF (LEMBAR OBSERVASI SIKAP & KINERJA)');
+  // Header
   docChildren.push(
-    new Paragraph({
-      spacing: { after: 80 },
-      children: [
-        new TextRun({
-          text: 'Petunjuk: Lembar ini digunakan oleh guru selama proses pembelajaran untuk mengamati perkembangan karakter dan keaktifan peserta didik.',
-          size: 19,
-          font: 'Arial',
-          italics: true,
-          color: '475569',
-        }),
-      ],
-    })
+    ...createDocumentHeader(
+      isBlankMode ? 'PANDUAN, INSTRUMEN ASESMEN & RUBRIK PENILAIAN (FORMAT KOSONG)' : 'PANDUAN, INSTRUMEN ASESMEN & RUBRIK PENILAIAN',
+      `${academicSetting.curriculum} — ${academicSetting.subject} ${academicSetting.grade}`
+    )
   );
 
-  const formatifHeader = new TableRow({
-    tableHeader: true,
-    children: [
-      createTableHeaderCell('No', 6),
-      createTableHeaderCell('Nama Peserta Didik', 30, AlignmentType.LEFT),
-      createTableHeaderCell('Bernalar Kritis', 16),
-      createTableHeaderCell('Gotong Royong', 16),
-      createTableHeaderCell('Kemandirian', 16),
-      createTableHeaderCell('Catatan Kejadian Khusus', 16, AlignmentType.LEFT),
-    ],
-  });
+  // Identity Metadata
+  docChildren.push(createIdentityMetadataTable(school, profile, academicSetting));
+  docChildren.push(new Paragraph({ spacing: { after: 180 } }));
 
-  const studentCount = isBlankMode ? 15 : Math.max(context.students?.length || 0, 4);
-  const formatifRows = Array.from({ length: studentCount }, (_, idx) => {
-    const studentName = !isBlankMode && context.students?.[idx]
-      ? context.students[idx].name
-      : `${idx + 1}. ........................................`;
-    return new TableRow({
+  if (isBlankMode) {
+    // BLANK TEMPLATE MODE (10 blank print rows, zero fake data)
+    addSectionHeading('I. KISI-KISI ASESMEN PEMBELAJARAN (IKTP & TEKNIK PENILAIAN)');
+    const kisiHeader = new TableRow({
+      tableHeader: true,
       children: [
-        createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
-        createTableDataCell(studentName, 30),
-        createTableDataCell(isBlankMode ? '' : 'SB / B / C / K', 16, AlignmentType.CENTER),
-        createTableDataCell(isBlankMode ? '' : 'SB / B / C / K', 16, AlignmentType.CENTER),
-        createTableDataCell(isBlankMode ? '' : 'SB / B / C / K', 16, AlignmentType.CENTER),
-        createTableDataCell('', 16),
+        createTableHeaderCell('No', 6),
+        createTableHeaderCell('Kode & Tujuan Pembelajaran', 34, AlignmentType.LEFT),
+        createTableHeaderCell('Indikator Asesmen', 30, AlignmentType.LEFT),
+        createTableHeaderCell('Teknik Asesmen', 15),
+        createTableHeaderCell('Bentuk Instrumen', 15),
       ],
     });
-  });
 
-  const formatifTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [formatifHeader, ...formatifRows],
-  });
+    const kisiBlankRows = Array.from({ length: 10 }, (_, idx) =>
+      new TableRow({
+        children: [
+          createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
+          createTableDataCell('..........................................................................................', 34),
+          createTableDataCell('..........................................................................................', 30),
+          createTableDataCell('....................', 15, AlignmentType.CENTER),
+          createTableDataCell('....................', 15, AlignmentType.CENTER),
+        ],
+      })
+    );
+    docChildren.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [kisiHeader, ...kisiBlankRows] }));
 
-  docChildren.push(formatifTable);
-
-  // III. RUBRIK PENILAIAN & KRITERIA KETERCAPAIAN (KKTP)
-  addSectionHeading('III. RUBRIK KRITERIA KETERCAPAIAN TUJUAN PEMBELAJARAN (KKTP)');
-
-  const rubrikHeader = new TableRow({
-    tableHeader: true,
-    children: [
-      createTableHeaderCell('Kategori Capaian', 22),
-      createTableHeaderCell('Rentang Interval', 18),
-      createTableHeaderCell('Deskripsi Kriteria Kualitatif', 40, AlignmentType.LEFT),
-      createTableHeaderCell('Intervensi / Tindak Lanjut Guru', 20, AlignmentType.LEFT),
-    ],
-  });
-
-  const rubrikRows = [
-    new TableRow({
+    // Blank Instruments
+    addSectionHeading('II. INSTRUMEN ASESMEN (FORMAT KOSONG)');
+    const instHeader = new TableRow({
+      tableHeader: true,
       children: [
-        createTableDataCell('Perlu Bimbingan', 22, AlignmentType.CENTER, true),
-        createTableDataCell('0% - 60%', 18, AlignmentType.CENTER),
-        createTableDataCell('Peserta didik belum mampu memahami konsep esensial dan belum dapat menyelesaikan latihan secara mandiri.', 40),
-        createTableDataCell('Remedial intensif secara individual dari awal konsep materi.', 20),
+        createTableHeaderCell('No', 6),
+        createTableHeaderCell('Nama Peserta Didik', 30, AlignmentType.LEFT),
+        createTableHeaderCell('Aspek / Indikator 1', 16),
+        createTableHeaderCell('Aspek / Indikator 2', 16),
+        createTableHeaderCell('Aspek / Indikator 3', 16),
+        createTableHeaderCell('Catatan Kejadian', 16, AlignmentType.LEFT),
       ],
-    }),
-    new TableRow({
-      children: [
-        createTableDataCell('Cukup', 22, AlignmentType.CENTER, true),
-        createTableDataCell('61% - 70%', 18, AlignmentType.CENTER),
-        createTableDataCell('Peserta didik telah memahami sebagian konsep dasar namun masih sering ragu dalam menyelesaikan soal penerapan.', 40),
-        createTableDataCell('Remedial pada bagian indikator yang belum tuntas dengan tutor sebaya.', 20),
-      ],
-    }),
-    new TableRow({
-      children: [
-        createTableDataCell('Baik', 22, AlignmentType.CENTER, true),
-        createTableDataCell('71% - 85%', 18, AlignmentType.CENTER),
-        createTableDataCell('Peserta didik telah mencapai tujuan pembelajaran secara menyeluruh dan mampu menyelesaikan tugas dengan tepat.', 40),
-        createTableDataCell('Diberikan apresiasi dan melanjutkan ke materi pembelajaran berikutnya.', 20),
-      ],
-    }),
-    new TableRow({
-      children: [
-        createTableDataCell('Sangat Baik', 22, AlignmentType.CENTER, true),
-        createTableDataCell('86% - 100%', 18, AlignmentType.CENTER),
-        createTableDataCell('Peserta didik menguasai materi secara mendalam dan mampu menganalisis serta mengaitkan konsep secara kreatif (HOTS).', 40),
-        createTableDataCell('Pengayaan berupa pemecahan masalah kompleks atau studi kasus mandiri.', 20),
-      ],
-    }),
-  ];
+    });
+    const instBlankRows = Array.from({ length: 10 }, (_, idx) =>
+      new TableRow({
+        children: [
+          createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
+          createTableDataCell(`${idx + 1}. ........................................`, 30),
+          createTableDataCell('', 16),
+          createTableDataCell('', 16),
+          createTableDataCell('', 16),
+          createTableDataCell('', 16),
+        ],
+      })
+    );
+    docChildren.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [instHeader, ...instBlankRows] }));
 
-  const rubrikTable = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [rubrikHeader, ...rubrikRows],
-  });
+    // Blank Rubric
+    addSectionHeading('III. RUBRIK PENILAIAN (FORMAT KOSONG)');
+    const rubHeader = new TableRow({
+      tableHeader: true,
+      children: [
+        createTableHeaderCell('Kriteria', 25),
+        createTableHeaderCell('Skala 1', 18),
+        createTableHeaderCell('Skala 2', 18),
+        createTableHeaderCell('Skala 3', 18),
+        createTableHeaderCell('Skala 4', 21),
+      ],
+    });
+    const rubBlankRows = Array.from({ length: 4 }, (_, idx) =>
+      new TableRow({
+        children: [
+          createTableDataCell(`Kriteria ${idx + 1}: ....................`, 25),
+          createTableDataCell('....................', 18),
+          createTableDataCell('....................', 18),
+          createTableDataCell('....................', 18),
+          createTableDataCell('....................', 21),
+        ],
+      })
+    );
+    docChildren.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [rubHeader, ...rubBlankRows] }));
+  } else {
+    // CANONICAL DATA MODE
+    // Locate active canonical AssessmentPackage
+    let pkg: AssessmentPackage | undefined;
+    if (context.activeAssessmentPackageId && context.assessmentPackages) {
+      pkg = context.assessmentPackages.find((p) => p.id === context.activeAssessmentPackageId);
+    } else if (context.assessmentPackages && context.assessmentPackages.length > 0) {
+      pkg = context.assessmentPackages.find((p) => p.workflowStatus === 'SIAP') || context.assessmentPackages[0];
+    }
 
-  docChildren.push(rubrikTable);
+    if (!pkg) {
+      throw new Error('Dokumen Asesmen tidak dapat dicetak: Perangkat Asesmen (AssessmentPackage) belum tersedia.');
+    }
 
-  // 4. Signoff Block
+    // Validate Package
+    const parentPlan = context.assessmentPlans?.find((p) => p.id === pkg!.assessmentPlanId);
+    const validation = validateAssessmentPackage(pkg, {
+      academicSetting,
+      assessmentPlan: parentPlan,
+      tp,
+      k13Analysis,
+      assessmentCriteria,
+    });
+
+    if (!validation.valid || pkg.workflowStatus !== 'SIAP') {
+      throw new Error(
+        `Dokumen Asesmen tidak dapat dicetak: Perangkat Asesmen "${pkg.title}" belum berstatus SIAP. Alasan: ${validation.errors.join('; ')}`
+      );
+    }
+
+    // I. KISI-KISI ASESMEN (from pkg.blueprintItems)
+    addSectionHeading('I. KISI-KISI ASESMEN PEMBELAJARAN');
+    const kisiHeader = new TableRow({
+      tableHeader: true,
+      children: [
+        createTableHeaderCell('No', 6),
+        createTableHeaderCell('Tujuan Pembelajaran (TP/KD)', 34, AlignmentType.LEFT),
+        createTableHeaderCell('Indikator Asesmen', 30, AlignmentType.LEFT),
+        createTableHeaderCell('Lingkup Materi', 15),
+        createTableHeaderCell('Bentuk Instrumen', 15),
+      ],
+    });
+
+    // Map objectives lookup
+    const tpMap = new Map((tp?.items || []).map((item) => [item.id, item]));
+    const k13Map = new Map((k13Analysis?.items || []).map((item) => [item.id, item]));
+
+    const kisiRows = pkg.blueprintItems.map((bp, idx) => {
+      let tpText = bp.objectiveRefId;
+      if (tpMap.has(bp.objectiveRefId)) {
+        const item = tpMap.get(bp.objectiveRefId)!;
+        tpText = `[${item.code}] ${item.statement}`;
+      } else if (k13Map.has(bp.objectiveRefId)) {
+        const item = k13Map.get(bp.objectiveRefId)!;
+        tpText = `[KD ${item.kd}] ${item.tujuanPembelajaran || item.indikator || ''}`;
+      }
+
+      return new TableRow({
+        children: [
+          createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
+          createTableDataCell(tpText, 34),
+          createTableDataCell(bp.assessmentIndicator || '—', 30),
+          createTableDataCell(bp.materialOrContext || '—', 15, AlignmentType.CENTER),
+          createTableDataCell(bp.instrumentType, 15, AlignmentType.CENTER),
+        ],
+      });
+    });
+
+    docChildren.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [kisiHeader, ...(kisiRows.length > 0 ? kisiRows : [
+          new TableRow({
+            children: [
+              createTableDataCell('—', 6, AlignmentType.CENTER),
+              createTableDataCell('Belum ada butir kisi-kisi', 34),
+              createTableDataCell('—', 30),
+              createTableDataCell('—', 15),
+              createTableDataCell('—', 15),
+            ],
+          })
+        ])],
+      })
+    );
+
+    // II. INSTRUMEN ASESMEN
+    addSectionHeading('II. INSTRUMEN ASESMEN');
+
+    if (pkg.instruments.length === 0) {
+      docChildren.push(new Paragraph({ children: [new TextRun({ text: 'Belum ada instrumen yang dikonfigurasi.', italics: true, size: 19 })] }));
+    } else {
+      pkg.instruments.forEach((inst) => {
+        docChildren.push(
+          new Paragraph({
+            spacing: { before: 120, after: 60 },
+            children: [
+              new TextRun({ text: `Instrumen: ${inst.type}`, bold: true, size: 20, font: 'Arial', color: '1E3A8A' }),
+            ],
+          })
+        );
+
+        if (inst.type === 'WRITTEN_TEST') {
+          const written = inst as WrittenAssessmentInstrument;
+          written.items.forEach((item, itemIdx) => {
+            docChildren.push(
+              new Paragraph({
+                spacing: { before: 60, after: 40 },
+                children: [
+                  new TextRun({ text: `${itemIdx + 1}. `, bold: true, size: 19 }),
+                  new TextRun({ text: item.prompt, size: 19 }),
+                ],
+              })
+            );
+            if (item.options && item.options.length > 0) {
+              item.options.forEach((opt) => {
+                docChildren.push(
+                  new Paragraph({
+                    indent: { left: 360 },
+                    spacing: { after: 20 },
+                    children: [
+                      new TextRun({ text: `${opt.label}. `, bold: true, size: 19 }),
+                      new TextRun({ text: opt.text, size: 19 }),
+                    ],
+                  })
+                );
+              });
+            }
+          });
+        } else if (inst.type === 'OBSERVATION') {
+          const obs = inst as ObservationAssessmentInstrument;
+          const obsHeader = new TableRow({
+            tableHeader: true,
+            children: [
+              createTableHeaderCell('No', 6),
+              createTableHeaderCell('Nama Peserta Didik', 34, AlignmentType.LEFT),
+              ...obs.aspects.map((asp) => createTableHeaderCell(asp.label, Math.floor(60 / Math.max(obs.aspects.length, 1)))),
+            ],
+          });
+
+          // 0 students = 0 rows in data mode!
+          const actualStudents = context.students || [];
+          const obsRows = actualStudents.map((st, idx) =>
+            new TableRow({
+              children: [
+                createTableDataCell(`${idx + 1}`, 6, AlignmentType.CENTER),
+                createTableDataCell(st.name, 34),
+                ...obs.aspects.map(() => createTableDataCell('', Math.floor(60 / Math.max(obs.aspects.length, 1)))),
+              ],
+            })
+          );
+
+          docChildren.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [obsHeader, ...obsRows] }));
+        } else if (inst.type === 'PERFORMANCE') {
+          const perf = inst as PerformanceAssessmentInstrument;
+          docChildren.push(
+            new Paragraph({
+              spacing: { after: 60 },
+              children: [new TextRun({ text: `Tugas/Instruksi: ${perf.task}`, size: 19 })],
+            })
+          );
+        }
+      });
+    }
+
+    // III. RUBRIK PENILAIAN (from pkg.rubrics)
+    addSectionHeading('III. RUBRIK PENILAIAN & KRITERIA KETERCAPAIAN (KKTP)');
+
+    if (pkg.rubrics.length === 0) {
+      docChildren.push(new Paragraph({ children: [new TextRun({ text: 'Belum ada rubrik terdaftar.', italics: true, size: 19 })] }));
+    } else {
+      pkg.rubrics.forEach((rub) => {
+        docChildren.push(
+          new Paragraph({
+            spacing: { before: 100, after: 60 },
+            children: [new TextRun({ text: rub.title, bold: true, size: 20, color: '1E3A8A' })],
+          })
+        );
+
+        const rubHeader = new TableRow({
+          tableHeader: true,
+          children: [
+            createTableHeaderCell('Kriteria', 25),
+            ...rub.scale.map((sc) => createTableHeaderCell(`${sc.label} (${sc.score || ''})`, Math.floor(75 / Math.max(rub.scale.length, 1)))),
+          ],
+        });
+
+        const rubRows = rub.criteria.map((crit) =>
+          new TableRow({
+            children: [
+              createTableDataCell(crit.label, 25),
+              ...rub.scale.map((sc) => createTableDataCell(sc.descriptor || '', Math.floor(75 / Math.max(rub.scale.length, 1)))),
+            ],
+          })
+        );
+
+        docChildren.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [rubHeader, ...rubRows] }));
+      });
+    }
+  }
+
+  // Signoff Block
   docChildren.push(...createSignoffBlock(school, profile, isBlankMode));
 
   const doc = new Document({
@@ -257,7 +370,7 @@ export async function generateAssessment(context: DocumentGenerationContext): Pr
   const cleanGrade = (academicSetting.grade || 'Kelas').replace(/[^a-zA-Z0-9]/g, '_');
   const fileName = isBlankMode
     ? `[Format_Kosong]_Asesmen_Rubrik_${cleanSubject}_${cleanGrade}.docx`
-    : `ASESMEN_DAN_RUBRIK_${cleanSubject}_${cleanGrade}_${new Date().toISOString().slice(0, 10)}.docx`;
+    : `ASESMEN_DAN_RUBRIK_${cleanSubject}_${cleanGrade}.docx`;
 
   if (!context.skipDownload) {
     saveAs(blob, fileName);

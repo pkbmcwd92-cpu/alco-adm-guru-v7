@@ -23,6 +23,8 @@ import {
   Archive,
 } from 'lucide-react';
 import {
+  AssessmentPlan,
+  AssessmentPackage,
   TeacherProfile,
   SchoolData,
   AcademicSetting,
@@ -93,6 +95,8 @@ interface AdminDocsExportProps {
   k13Analysis?: K13Analysis;
   k13KKM?: K13KKM;
   learningPlans?: LearningPlan[];
+  assessmentPlans?: AssessmentPlan[];
+  assessmentPackages?: AssessmentPackage[];
   onBackToStep: (stepId: WorkflowStepId) => void;
   onUpdateDocuments?: (updatedDocs: AppDocumentRecord[]) => void;
 }
@@ -120,6 +124,8 @@ export const AdminDocsExport: React.FC<AdminDocsExportProps> = ({
   k13Analysis,
   k13KKM,
   learningPlans = [],
+  assessmentPlans = [],
+  assessmentPackages = [],
   onBackToStep,
   onUpdateDocuments,
 }) => {
@@ -179,6 +185,8 @@ export const AdminDocsExport: React.FC<AdminDocsExportProps> = ({
     k13Analysis,
     k13KKM,
     learningPlans,
+    assessmentPlans,
+    assessmentPackages,
   };
 
   const getDocRecord = (type: DocumentType): AppDocumentRecord | undefined => {

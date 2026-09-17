@@ -721,6 +721,260 @@ export interface AssessmentPlan {
   confirmedAt?: string;
 }
 
+// ==========================================
+// CANONICAL ASSESSMENT PACKAGE (AUDIT 9B)
+// ==========================================
+
+export interface AssessmentBlueprintItem {
+  id: string;
+  objectiveRefId: string; // ID for TP or KD
+  criterionId?: string; // ID for KKTP Criterion
+  assessmentIndicator?: string; // Indicator written by teacher
+  materialOrContext?: string; // Material/Context written by teacher
+  instrumentType: AssessmentInstrumentType;
+  instrumentItemIds: string[];
+  order: number;
+  status?: 'DRAFT' | 'REVIEWED';
+}
+
+// Written Test
+export type WrittenAssessmentItemType =
+  | 'MULTIPLE_CHOICE'
+  | 'MULTIPLE_SELECT'
+  | 'TRUE_FALSE'
+  | 'SHORT_ANSWER'
+  | 'ESSAY';
+
+export interface WrittenAssessmentOption {
+  id: string;
+  label: string;
+  text: string;
+  isCorrect?: boolean;
+}
+
+export interface WrittenAssessmentItem {
+  id: string;
+  blueprintItemId?: string;
+  itemType: WrittenAssessmentItemType;
+  prompt: string;
+  stimulus?: string;
+  options?: WrittenAssessmentOption[];
+  order: number;
+}
+
+export interface WrittenAssessmentInstrument {
+  id: string;
+  type: 'WRITTEN_TEST';
+  title?: string;
+  instructions?: string;
+  items: WrittenAssessmentItem[];
+}
+
+// Oral Test
+export interface OralAssessmentItem {
+  id: string;
+  blueprintItemId?: string;
+  prompt: string;
+  expectedResponse?: string;
+  order: number;
+}
+
+export interface OralAssessmentInstrument {
+  id: string;
+  type: 'ORAL_TEST';
+  title?: string;
+  instructions?: string;
+  items: OralAssessmentItem[];
+}
+
+// Performance / Praktik
+export interface PerformanceAspect {
+  id: string;
+  label: string;
+  description?: string;
+  weight?: number;
+}
+
+export interface PerformanceAssessmentInstrument {
+  id: string;
+  type: 'PERFORMANCE';
+  title?: string;
+  task: string;
+  instructions?: string;
+  blueprintItemId?: string;
+  rubricId?: string;
+  scoringGuideId?: string;
+  aspects?: PerformanceAspect[];
+}
+
+// Observation
+export interface ObservationAspect {
+  id: string;
+  label: string;
+  indicator?: string;
+}
+
+export interface ObservationAssessmentInstrument {
+  id: string;
+  type: 'OBSERVATION';
+  title?: string;
+  instructions?: string;
+  recordingScheme?: string;
+  aspects: ObservationAspect[];
+}
+
+// Assignment
+export interface AssignmentAssessmentInstrument {
+  id: string;
+  type: 'ASSIGNMENT';
+  title?: string;
+  instructions: string;
+  expectedOutput?: string;
+  blueprintItemId?: string;
+  scoringGuideId?: string;
+  rubricId?: string;
+}
+
+// Project
+export interface ProjectAssessmentInstrument {
+  id: string;
+  type: 'PROJECT';
+  title?: string;
+  projectBrief: string;
+  expectedDeliverable?: string;
+  blueprintItemId?: string;
+  rubricId?: string;
+  scoringGuideId?: string;
+}
+
+// Product
+export interface ProductAssessmentInstrument {
+  id: string;
+  type: 'PRODUCT';
+  title?: string;
+  productBrief: string;
+  expectedProduct?: string;
+  blueprintItemId?: string;
+  rubricId?: string;
+  scoringGuideId?: string;
+}
+
+// Portfolio
+export interface PortfolioAssessmentInstrument {
+  id: string;
+  type: 'PORTFOLIO';
+  title?: string;
+  instructions: string;
+  evidenceRequirements: string[];
+  blueprintItemId?: string;
+  rubricId?: string;
+  scoringGuideId?: string;
+}
+
+// Self / Peer Assessment
+export interface SelfPeerAssessmentItem {
+  id: string;
+  statement: string;
+  category?: string;
+}
+
+export interface SelfPeerAssessmentInstrument {
+  id: string;
+  type: 'SELF_ASSESSMENT' | 'PEER_ASSESSMENT';
+  title?: string;
+  instructions?: string;
+  items: SelfPeerAssessmentItem[];
+  responseScheme?: string;
+}
+
+export type AssessmentInstrument =
+  | WrittenAssessmentInstrument
+  | OralAssessmentInstrument
+  | PerformanceAssessmentInstrument
+  | ObservationAssessmentInstrument
+  | AssignmentAssessmentInstrument
+  | ProjectAssessmentInstrument
+  | ProductAssessmentInstrument
+  | PortfolioAssessmentInstrument
+  | SelfPeerAssessmentInstrument;
+
+// Answer Key
+export interface AssessmentAnswerKey {
+  id: string;
+  instrumentId: string;
+  instrumentItemId: string;
+  answerType: 'EXACT' | 'OPTION' | 'MULTIPLE_OPTION' | 'EXPECTED_RESPONSE';
+  value?: string;
+  optionIds?: string[];
+  notes?: string;
+}
+
+// Scoring Guide
+export interface AssessmentScoringGuide {
+  id: string;
+  title: string;
+  instrumentId?: string;
+  instrumentItemId?: string;
+  guideType: 'OBJECTIVE' | 'MANUAL' | 'ESSAY' | 'RUBRIC_BASED';
+  instructions?: string;
+  maxScore?: number;
+  notes?: string;
+}
+
+// Rubric
+export interface RubricCriterion {
+  id: string;
+  label: string;
+  indicator?: string;
+  weight?: number;
+}
+
+export interface RubricScaleLevel {
+  id: string;
+  label: string;
+  score?: number;
+  descriptor?: string;
+  order: number;
+}
+
+export interface AssessmentRubric {
+  id: string;
+  title: string;
+  instrumentId?: string;
+  instrumentItemId?: string;
+  criteria: RubricCriterion[];
+  scale: RubricScaleLevel[];
+  status?: 'DRAFT' | 'REVIEWED';
+}
+
+// Assessment Package (Audit 9B)
+export interface AssessmentPackage {
+  id: string;
+  assessmentPlanId: string;
+  academicSettingId: string;
+  workspaceId?: string;
+
+  title: string;
+
+  blueprintItems: AssessmentBlueprintItem[];
+  instruments: AssessmentInstrument[];
+
+  answerKeys: AssessmentAnswerKey[];
+  scoringGuides: AssessmentScoringGuide[];
+  rubrics: AssessmentRubric[];
+
+  workflowStatus: 'DRAFT' | 'PERLU_DILENGKAPI' | 'SIAP';
+
+  needsReview?: boolean;
+  reviewReason?: string;
+
+  revision?: number;
+  provenance?: DataProvenance;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type AssessmentType = 'formatif' | 'sumatif_lingkup_materi' | 'sumatif_akhir_semester';
 
 export interface Assessment {
@@ -925,6 +1179,7 @@ export interface ProfileWorkspaceData {
   k13KKM?: K13KKM;
   learningPlans: LearningPlan[];
   assessmentPlans: AssessmentPlan[];
+  assessmentPackages?: AssessmentPackage[];
 }
 
 export interface AppStorageState {
@@ -961,6 +1216,7 @@ export interface AppStorageState {
   k13KKMs?: K13KKM[];
   learningPlans?: LearningPlan[];
   assessmentPlans?: AssessmentPlan[];
+  assessmentPackages?: AssessmentPackage[];
 }
 
 export type AppDataStore = AppStorageState;

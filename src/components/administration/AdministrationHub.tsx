@@ -36,12 +36,14 @@ import {
   K13KKM,
   LearningPlan,
   AssessmentPlan,
+  AssessmentPackage,
 } from '../../types';
 import { TimePlanningManager } from './TimePlanningManager';
 import { AttendanceManager } from './AttendanceManager';
 import { KKTPManager } from './KKTPManager';
 import { AssessmentGradeManager } from './AssessmentGradeManager';
 import { AssessmentPlanManager } from './AssessmentPlanManager';
+import { AssessmentPackageBuilder } from './AssessmentPackageBuilder';
 import { FollowUpManager } from './FollowUpManager';
 import { LearningPlanManager } from './LearningPlanManager';
 import { AdminDocsExport } from '../AdminDocsExport';
@@ -80,6 +82,7 @@ interface AdministrationHubProps {
   k13KKM?: K13KKM;
   learningPlans?: LearningPlan[];
   assessmentPlans?: AssessmentPlan[];
+  assessmentPackages?: AssessmentPackage[];
   initialTab?: AdministrationTab;
   onSaveCalendar: (calendar: AcademicCalendar, days: CalendarDay[]) => void;
   onSaveTimeAllocations: (allocations: TimeAllocation[]) => void;
@@ -90,6 +93,8 @@ interface AdministrationHubProps {
   onDeleteAssessment: (assessmentId: string) => void;
   onSaveAssessmentPlan?: (plan: AssessmentPlan) => void;
   onDeleteAssessmentPlan?: (planId: string) => void;
+  onSaveAssessmentPackage?: (pkg: AssessmentPackage) => void;
+  onDeleteAssessmentPackage?: (pkgId: string) => void;
   onSaveRemedials: (records: RemedialRecord[]) => void;
   onSaveEnrichments: (records: EnrichmentRecord[]) => void;
   onSaveK13Analysis: (analysis: K13Analysis) => void;
@@ -124,6 +129,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   k13KKM,
   learningPlans = [],
   assessmentPlans = [],
+  assessmentPackages = [],
   initialTab = 'time_planning',
   onSaveCalendar,
   onSaveTimeAllocations,
@@ -134,6 +140,8 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
   onDeleteAssessment,
   onSaveAssessmentPlan,
   onDeleteAssessmentPlan,
+  onSaveAssessmentPackage,
+  onDeleteAssessmentPackage,
   onSaveRemedials,
   onSaveEnrichments,
   onSaveK13Analysis,
@@ -145,7 +153,7 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
 }) => {
   const isK13Active = isK13(academicSetting);
   const [activeTab, setActiveTab] = useState<AdministrationTab>(initialTab);
-  const [assessmentSubTab, setAssessmentSubTab] = useState<'plan_master' | 'gradebook'>('plan_master');
+  const [assessmentSubTab, setAssessmentSubTab] = useState<'plan_master' | 'package_builder' | 'gradebook'>('plan_master');
 
   const tabs = [
     {
@@ -343,31 +351,41 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
 
         {activeTab === 'assessment_grades' && (
           <div className="space-y-4">
-            {/* Sub-navigation selector for Assessment Master vs Gradebook */}
-            <div className="flex bg-slate-200/80 p-1 rounded-xl w-fit text-xs font-semibold">
+            {/* Sub-navigation selector for Assessment Master vs Package Builder vs Gradebook */}
+            <div className="flex bg-slate-200/80 p-1 rounded-xl w-fit text-xs font-semibold gap-1">
               <button
                 onClick={() => setAssessmentSubTab('plan_master')}
                 className={`px-4 py-2 rounded-lg transition-all ${
                   assessmentSubTab === 'plan_master'
-                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                1. Perangkat & Rencana Asesmen (Assessment Master)
+                1. Rencana Asesmen (Assessment Master)
+              </button>
+              <button
+                onClick={() => setAssessmentSubTab('package_builder')}
+                className={`px-4 py-2 rounded-lg transition-all ${
+                  assessmentSubTab === 'package_builder'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                2. Builder Perangkat Asesmen (Kisi-Kisi & Soal)
               </button>
               <button
                 onClick={() => setAssessmentSubTab('gradebook')}
                 className={`px-4 py-2 rounded-lg transition-all ${
                   assessmentSubTab === 'gradebook'
-                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-bold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                2. Pengolahan Nilai & Rapor Siswa
+                3. Pengolahan Nilai & Rapor Siswa
               </button>
             </div>
 
-            {assessmentSubTab === 'plan_master' ? (
+            {assessmentSubTab === 'plan_master' && (
               <AssessmentPlanManager
                 school={school}
                 profile={profile}
@@ -386,7 +404,29 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
                   if (onDeleteAssessmentPlan) onDeleteAssessmentPlan(planId);
                 }}
               />
-            ) : (
+            )}
+
+            {assessmentSubTab === 'package_builder' && (
+              <AssessmentPackageBuilder
+                school={school}
+                profile={profile}
+                academicSetting={academicSetting}
+                workspace={workspace}
+                tp={tp}
+                k13Analysis={k13Analysis}
+                assessmentCriteria={assessmentCriteria}
+                assessmentPlans={assessmentPlans}
+                assessmentPackages={assessmentPackages}
+                onSaveAssessmentPackage={(pkg) => {
+                  if (onSaveAssessmentPackage) onSaveAssessmentPackage(pkg);
+                }}
+                onDeleteAssessmentPackage={(pkgId) => {
+                  if (onDeleteAssessmentPackage) onDeleteAssessmentPackage(pkgId);
+                }}
+              />
+            )}
+
+            {assessmentSubTab === 'gradebook' && (
               <AssessmentGradeManager
                 school={school}
                 profile={profile}
@@ -462,6 +502,8 @@ export const AdministrationHub: React.FC<AdministrationHubProps> = ({
             k13Analysis={k13Analysis}
             k13KKM={k13KKM}
             learningPlans={learningPlans}
+            assessmentPlans={assessmentPlans}
+            assessmentPackages={assessmentPackages}
             onBackToStep={onBackToStep}
             onUpdateDocuments={onUpdateDocuments}
           />

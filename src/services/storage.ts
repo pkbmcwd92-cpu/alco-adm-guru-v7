@@ -28,11 +28,13 @@ import {
   CPAnalysisData,
   LearningPlan,
   AssessmentPlan,
+  AssessmentPackage,
 } from '../types';
 import { getCurriculumTypeFromSetting, isK13, isMerdeka } from './curriculumRouter';
 import { validateATPReferences, normalizeATPReferences, validateATPDataWorkflow } from './cpWorkflowService';
 import { migrateLegacyLearningPlan, invalidatePlanIfDependenciesChanged } from './learningPlanService';
 import { invalidateAssessmentPlanDependencies } from './assessmentPlanService';
+import { invalidateAssessmentPackageDependencies } from './assessmentPackageService';
 import {
   INITIAL_PROFILES,
   INITIAL_SCHOOL,
@@ -217,6 +219,7 @@ export function getInitialState(): AppStorageState {
     k13KKMs: [],
     learningPlans: [],
     assessmentPlans: [],
+    assessmentPackages: [],
   };
 }
 
@@ -291,6 +294,7 @@ export function loadAppStorage(): AppStorageState {
     if (!Array.isArray(parsed.students)) { parsed.students = []; needsResave = true; }
     if (!Array.isArray(parsed.schools)) { parsed.schools = [{ ...INITIAL_SCHOOL }]; needsResave = true; }
     if (!Array.isArray(parsed.principalHistories)) { parsed.principalHistories = []; needsResave = true; }
+    if (!Array.isArray(parsed.assessmentPackages)) { parsed.assessmentPackages = []; needsResave = true; }
 
     // Migration: ensure every profile has a valid schoolId
     // If TeacherProfile.schoolId is valid, keep it.
@@ -837,6 +841,19 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
     return ap;
   });
 
+  const planMap = new Map(assessmentPlans.map((p) => [p.id, p]));
+  const rawAssessmentPackages = (state.assessmentPackages || []).filter((pkg) => pkg.academicSettingId === academicSetting!.id);
+  const assessmentPackages = rawAssessmentPackages.map((pkg) => {
+    const parentPlan = planMap.get(pkg.assessmentPlanId);
+    if (pkg.workflowStatus === 'SIAP') {
+      const reval = invalidateAssessmentPackageDependencies(pkg, { academicSetting, assessmentPlan: parentPlan, tp, k13Analysis, assessmentCriteria });
+      if (reval.isInvalidated) {
+        return reval.package;
+      }
+    }
+    return pkg;
+  });
+
   return {
     profile,
     school,
@@ -877,6 +894,7 @@ export function getProfileWorkspace(profileId: string, workspaceId?: string): Pr
     k13KKM,
     learningPlans,
     assessmentPlans,
+    assessmentPackages,
   };
 }
 
@@ -2062,6 +2080,34 @@ export function saveAssessmentPlansBulk(plans: AssessmentPlan[]): void {
   });
   state.assessmentPlans = Array.from(planMap.values());
   saveAppStorage(state);
+}
+
+export function saveAssessmentPackage(pkg: AssessmentPackage): void {
+  const state = loadAppStorage();
+  if (!state.assessmentPackages) state.assessmentPackages = [];
+  const idx = state.assessmentPackages.findIndex((p) => p.id === pkg.id);
+  const updatedPkg: AssessmentPackage = {
+    ...pkg,
+    updatedAt: new Date().toISOString(),
+  };
+  if (idx >= 0) {
+    state.assessmentPackages[idx] = updatedPkg;
+  } else {
+    state.assessmentPackages.push(updatedPkg);
+  }
+  saveAppStorage(state);
+}
+
+export function deleteAssessmentPackage(packageId: string): void {
+  const state = loadAppStorage();
+  if (!state.assessmentPackages) return;
+  state.assessmentPackages = state.assessmentPackages.filter((p) => p.id !== packageId);
+  saveAppStorage(state);
+}
+
+export function getAssessmentPackagesForSetting(academicSettingId: string): AssessmentPackage[] {
+  const state = loadAppStorage();
+  return (state.assessmentPackages || []).filter((p) => p.academicSettingId === academicSettingId);
 }
 
 export function resetToDefaultData(): void {
