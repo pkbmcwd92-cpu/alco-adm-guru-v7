@@ -12,6 +12,16 @@ import {
   AssessmentCriterion,
   WrittenAssessmentInstrument,
   WrittenAssessmentOption,
+  WrittenAssessmentItem,
+  MatchingAssessmentEntry,
+  MatchingAssessmentPair,
+  CategoryResponseStatement,
+  CategoryResponseCategory,
+  CognitiveDemand,
+  AssessmentEvidenceType,
+  AssessmentStimulusType,
+  AssessmentDifficultyTarget,
+  ShortAnswerResponseMode,
   OralAssessmentInstrument,
   PerformanceAssessmentInstrument,
   ObservationAssessmentInstrument,
@@ -238,6 +248,18 @@ export function validateAssessmentPackage(
         }
       }
 
+      // Audit 9C.1 Optional Blueprint Metadata Range & Deterministic Checks
+      if (bp.recommendedItemCount !== undefined) {
+        if (typeof bp.recommendedItemCount !== 'number' || bp.recommendedItemCount < 0 || !Number.isFinite(bp.recommendedItemCount)) {
+          errors.push(`Butir kisi-kisi #${idx + 1} memiliki recommendedItemCount tidak valid (harus angka >= 0).`);
+        }
+      }
+      if (bp.estimatedMinutes !== undefined) {
+        if (typeof bp.estimatedMinutes !== 'number' || bp.estimatedMinutes < 0 || !Number.isFinite(bp.estimatedMinutes)) {
+          errors.push(`Butir kisi-kisi #${idx + 1} memiliki estimatedMinutes tidak valid (harus angka >= 0).`);
+        }
+      }
+
       if (!bp.assessmentIndicator || bp.assessmentIndicator.trim() === '') {
         warnings.push(`Indikator asesmen pada butir kisi-kisi #${idx + 1} belum diisi.`);
       }
@@ -290,6 +312,108 @@ export function validateAssessmentPackage(
                 if (!hasCorrect && !hasAnswerKey) {
                   errors.push(`Soal pilihan ganda #${itemIdx + 1} belum menentukan kunci/opsi jawaban yang benar.`);
                 }
+              }
+            } else if (item.itemType === 'MATCHING') {
+              const premises = item.matchingPremises || [];
+              const responses = item.matchingResponses || [];
+
+              if (premises.length === 0) {
+                errors.push(`Soal menjodohkan (Matching) #${itemIdx + 1} wajib memiliki minimal 1 premis / pernyataan asal.`);
+              } else {
+                premises.forEach((p, pIdx) => {
+                  if (!p.id || !p.text || p.text.trim() === '') {
+                    errors.push(`Premis #${pIdx + 1} pada soal menjodohkan #${itemIdx + 1} belum memiliki teks premis.`);
+                  }
+                });
+              }
+
+              if (responses.length === 0) {
+                errors.push(`Soal menjodohkan (Matching) #${itemIdx + 1} wajib memiliki minimal 1 respon / opsi pasangan.`);
+              } else {
+                responses.forEach((r, rIdx) => {
+                  if (!r.id || !r.text || r.text.trim() === '') {
+                    errors.push(`Respon #${rIdx + 1} pada soal menjodohkan #${itemIdx + 1} belum memiliki teks respon.`);
+                  }
+                });
+              }
+
+              const itemPairs = item.matchingPairs;
+              const akPairKey = pkg.answerKeys.find(
+                (ak) => ak.instrumentItemId === item.id && ak.answerType === 'MATCHING'
+              );
+              const pairs = (itemPairs && itemPairs.length > 0) ? itemPairs : (akPairKey?.matchingPairs || []);
+
+              if (pairs.length === 0) {
+                errors.push(`Soal menjodohkan (Matching) #${itemIdx + 1} wajib memiliki pasangan kunci jawaban (matchingPairs).`);
+              } else {
+                const premiseIdSet = new Set(premises.map((p) => p.id));
+                const responseIdSet = new Set(responses.map((r) => r.id));
+
+                pairs.forEach((pair, pairIdx) => {
+                  if (!pair.premiseId || !premiseIdSet.has(pair.premiseId)) {
+                    errors.push(
+                      `Pasangan #${pairIdx + 1} pada soal menjodohkan #${itemIdx + 1} merujuk pada premiseId [${pair.premiseId}] yang tidak ditemukan (dangling premise reference).`
+                    );
+                  }
+                  if (!pair.responseId || !responseIdSet.has(pair.responseId)) {
+                    errors.push(
+                      `Pasangan #${pairIdx + 1} pada soal menjodohkan #${itemIdx + 1} merujuk pada responseId [${pair.responseId}] yang tidak ditemukan (dangling response reference).`
+                    );
+                  }
+                });
+              }
+            } else if (item.itemType === 'CATEGORY_RESPONSE') {
+              const categories = item.categoryResponseCategories || [];
+              const statements = item.categoryResponseStatements || [];
+
+              if (categories.length < 2) {
+                errors.push(
+                  `Soal kategori (Category Response) #${itemIdx + 1} wajib memiliki minimal 2 pilihan kategori (misal: Benar/Salah, Sesuai/Tidak Sesuai).`
+                );
+              } else {
+                categories.forEach((cat, catIdx) => {
+                  if (!cat.id || !cat.label || cat.label.trim() === '') {
+                    errors.push(`Kategori #${catIdx + 1} pada soal kategori #${itemIdx + 1} belum memiliki label.`);
+                  }
+                });
+              }
+
+              if (statements.length === 0) {
+                errors.push(
+                  `Soal kategori (Category Response) #${itemIdx + 1} wajib memiliki minimal 1 butir pernyataan (statement).`
+                );
+              } else {
+                statements.forEach((stmt, stmtIdx) => {
+                  if (!stmt.id || !stmt.text || stmt.text.trim() === '') {
+                    errors.push(`Pernyataan #${stmtIdx + 1} pada soal kategori #${itemIdx + 1} belum memiliki teks pernyataan.`);
+                  }
+                });
+              }
+
+              const catIdSet = new Set(categories.map((c) => c.id));
+              const akCatKey = pkg.answerKeys.find(
+                (ak) => ak.instrumentItemId === item.id && ak.answerType === 'CATEGORY_RESPONSE'
+              );
+              const akCatMap = new Map<string, string>();
+              if (akCatKey?.categoryAnswers) {
+                akCatKey.categoryAnswers.forEach((ca) => akCatMap.set(ca.statementId, ca.categoryId));
+              }
+
+              statements.forEach((stmt, stmtIdx) => {
+                const assignedCatId = stmt.correctCategoryId || akCatMap.get(stmt.id);
+                if (!assignedCatId) {
+                  errors.push(
+                    `Pernyataan #${stmtIdx + 1} pada soal kategori #${itemIdx + 1} belum menentukan kategori jawaban yang benar.`
+                  );
+                } else if (!catIdSet.has(assignedCatId)) {
+                  errors.push(
+                    `Pernyataan #${stmtIdx + 1} pada soal kategori #${itemIdx + 1} merujuk pada categoryId [${assignedCatId}] yang tidak ditemukan (dangling category reference).`
+                  );
+                }
+              });
+            } else if (item.itemType === 'SHORT_ANSWER') {
+              if (item.responseMode && item.responseMode !== 'SHORT_RESPONSE' && item.responseMode !== 'COMPLETION') {
+                errors.push(`Soal isian singkat #${itemIdx + 1} memiliki responseMode tidak valid [${item.responseMode}].`);
               }
             }
           });
@@ -387,7 +511,15 @@ export function validateAssessmentPackage(
   const instrumentMap = new Map<string, AssessmentInstrument>();
   const allItemLookup = new Map<
     string,
-    { instrumentId: string; instrumentType: string; options?: WrittenAssessmentOption[] }
+    {
+      instrumentId: string;
+      instrumentType: string;
+      options?: WrittenAssessmentOption[];
+      matchingPremises?: MatchingAssessmentEntry[];
+      matchingResponses?: MatchingAssessmentEntry[];
+      categoryResponseStatements?: CategoryResponseStatement[];
+      categoryResponseCategories?: CategoryResponseCategory[];
+    }
   >();
 
   pkg.instruments.forEach((inst) => {
@@ -395,7 +527,15 @@ export function validateAssessmentPackage(
     switch (inst.type) {
       case 'WRITTEN_TEST':
         (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
-          allItemLookup.set(it.id, { instrumentId: inst.id, instrumentType: 'WRITTEN_TEST', options: it.options });
+          allItemLookup.set(it.id, {
+            instrumentId: inst.id,
+            instrumentType: 'WRITTEN_TEST',
+            options: it.options,
+            matchingPremises: it.matchingPremises,
+            matchingResponses: it.matchingResponses,
+            categoryResponseStatements: it.categoryResponseStatements,
+            categoryResponseCategories: it.categoryResponseCategories,
+          });
         });
         break;
       case 'ORAL_TEST':
@@ -469,6 +609,52 @@ export function validateAssessmentPackage(
           if (!validOptIds.has(optId)) {
             errors.push(
               `Kunci jawaban #${akIdx + 1} merujuk pada opsi ID [${optId}] yang tidak ada pada pilihan butir soal.`
+            );
+          }
+        });
+      }
+    } else if (ak.answerType === 'MATCHING') {
+      if (!itemMeta.matchingPremises || itemMeta.matchingPremises.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe MATCHING, tetapi butir instrumen tidak memiliki daftar premis.`);
+      } else if (!itemMeta.matchingResponses || itemMeta.matchingResponses.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe MATCHING, tetapi butir instrumen tidak memiliki daftar respon.`);
+      } else if (!ak.matchingPairs || ak.matchingPairs.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe MATCHING tetapi tidak memiliki pasangan (matchingPairs kosong).`);
+      } else {
+        const premiseIdSet = new Set(itemMeta.matchingPremises.map((p) => p.id));
+        const responseIdSet = new Set(itemMeta.matchingResponses.map((r) => r.id));
+        ak.matchingPairs.forEach((pair, pairIdx) => {
+          if (!pair.premiseId || !premiseIdSet.has(pair.premiseId)) {
+            errors.push(
+              `Kunci jawaban #${akIdx + 1} pasangan #${pairIdx + 1} merujuk pada premiseId [${pair.premiseId}] yang tidak ditemukan (dangling reference).`
+            );
+          }
+          if (!pair.responseId || !responseIdSet.has(pair.responseId)) {
+            errors.push(
+              `Kunci jawaban #${akIdx + 1} pasangan #${pairIdx + 1} merujuk pada responseId [${pair.responseId}] yang tidak ditemukan (dangling reference).`
+            );
+          }
+        });
+      }
+    } else if (ak.answerType === 'CATEGORY_RESPONSE') {
+      if (!itemMeta.categoryResponseCategories || itemMeta.categoryResponseCategories.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe CATEGORY_RESPONSE, tetapi butir instrumen tidak memiliki daftar kategori.`);
+      } else if (!itemMeta.categoryResponseStatements || itemMeta.categoryResponseStatements.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe CATEGORY_RESPONSE, tetapi butir instrumen tidak memiliki daftar pernyataan.`);
+      } else if (!ak.categoryAnswers || ak.categoryAnswers.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe CATEGORY_RESPONSE tetapi tidak memiliki jawaban kategori (categoryAnswers kosong).`);
+      } else {
+        const stmtIdSet = new Set(itemMeta.categoryResponseStatements.map((s) => s.id));
+        const catIdSet = new Set(itemMeta.categoryResponseCategories.map((c) => c.id));
+        ak.categoryAnswers.forEach((ca, caIdx) => {
+          if (!ca.statementId || !stmtIdSet.has(ca.statementId)) {
+            errors.push(
+              `Kunci jawaban #${akIdx + 1} item #${caIdx + 1} merujuk pada statementId [${ca.statementId}] yang tidak ditemukan (dangling reference).`
+            );
+          }
+          if (!ca.categoryId || !catIdSet.has(ca.categoryId)) {
+            errors.push(
+              `Kunci jawaban #${akIdx + 1} item #${caIdx + 1} merujuk pada categoryId [${ca.categoryId}] yang tidak ditemukan (dangling reference).`
             );
           }
         });
@@ -688,14 +874,47 @@ export function invalidateAssessmentPackageDependencies(
   const instrumentMap = new Map(pkg.instruments.map((i) => [i.id, i]));
   const allItemLookup = new Map<
     string,
-    { instrumentId: string; options?: WrittenAssessmentOption[] }
+    {
+      instrumentId: string;
+      options?: WrittenAssessmentOption[];
+      matchingPremises?: MatchingAssessmentEntry[];
+      matchingResponses?: MatchingAssessmentEntry[];
+      categoryResponseStatements?: CategoryResponseStatement[];
+      categoryResponseCategories?: CategoryResponseCategory[];
+    }
   >();
 
   pkg.instruments.forEach((inst) => {
     switch (inst.type) {
       case 'WRITTEN_TEST':
         (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
-          allItemLookup.set(it.id, { instrumentId: inst.id, options: it.options });
+          allItemLookup.set(it.id, {
+            instrumentId: inst.id,
+            options: it.options,
+            matchingPremises: it.matchingPremises,
+            matchingResponses: it.matchingResponses,
+            categoryResponseStatements: it.categoryResponseStatements,
+            categoryResponseCategories: it.categoryResponseCategories,
+          });
+
+          // Check item-level pairs/categories integrity
+          if (it.itemType === 'MATCHING' && it.matchingPairs) {
+            const validPremises = new Set((it.matchingPremises || []).map((p) => p.id));
+            const validResponses = new Set((it.matchingResponses || []).map((r) => r.id));
+            it.matchingPairs.forEach((pair) => {
+              if (!validPremises.has(pair.premiseId) || !validResponses.has(pair.responseId)) {
+                reasons.push(`Soal menjodohkan [${it.id}] memiliki pasangan kunci yang merujuk pada premis/respon yang telah dihapus.`);
+              }
+            });
+          }
+          if (it.itemType === 'CATEGORY_RESPONSE' && it.categoryResponseStatements) {
+            const validCats = new Set((it.categoryResponseCategories || []).map((c) => c.id));
+            it.categoryResponseStatements.forEach((stmt) => {
+              if (stmt.correctCategoryId && !validCats.has(stmt.correctCategoryId)) {
+                reasons.push(`Pernyataan [${stmt.id}] pada soal kategori [${it.id}] merujuk pada kategori yang telah dihapus.`);
+              }
+            });
+          }
         });
         break;
       case 'ORAL_TEST':
@@ -739,6 +958,30 @@ export function invalidateAssessmentPackageDependencies(
         ak.optionIds.forEach((optId) => {
           if (!validOptIds.has(optId)) {
             reasons.push(`Kunci jawaban merujuk pada opsi ID [${optId}] yang telah dihapus.`);
+          }
+        });
+      }
+      if (ak.answerType === 'MATCHING' && ak.matchingPairs) {
+        const validPremises = new Set((meta.matchingPremises || []).map((p) => p.id));
+        const validResponses = new Set((meta.matchingResponses || []).map((r) => r.id));
+        ak.matchingPairs.forEach((pair) => {
+          if (!validPremises.has(pair.premiseId)) {
+            reasons.push(`Kunci jawaban menjodohkan merujuk pada premis [${pair.premiseId}] yang telah dihapus.`);
+          }
+          if (!validResponses.has(pair.responseId)) {
+            reasons.push(`Kunci jawaban menjodohkan merujuk pada respon [${pair.responseId}] yang telah dihapus.`);
+          }
+        });
+      }
+      if (ak.answerType === 'CATEGORY_RESPONSE' && ak.categoryAnswers) {
+        const validStmts = new Set((meta.categoryResponseStatements || []).map((s) => s.id));
+        const validCats = new Set((meta.categoryResponseCategories || []).map((c) => c.id));
+        ak.categoryAnswers.forEach((ca) => {
+          if (!validStmts.has(ca.statementId)) {
+            reasons.push(`Kunci jawaban kategori merujuk pada pernyataan [${ca.statementId}] yang telah dihapus.`);
+          }
+          if (!validCats.has(ca.categoryId)) {
+            reasons.push(`Kunci jawaban kategori merujuk pada kategori [${ca.categoryId}] yang telah dihapus.`);
           }
         });
       }

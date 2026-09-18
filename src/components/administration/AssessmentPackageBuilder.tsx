@@ -46,6 +46,10 @@ import {
   RubricCriterion,
   RubricScaleLevel,
   AssessmentInstrumentType,
+  MatchingAssessmentEntry,
+  MatchingAssessmentPair,
+  CategoryResponseStatement,
+  CategoryResponseCategory,
 } from '../../types';
 import {
   createEmptyAssessmentPackage,
@@ -560,6 +564,8 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                     <option value="TRUE_FALSE">Benar / Salah</option>
                                     <option value="SHORT_ANSWER">Isian Singkat</option>
                                     <option value="ESSAY">Uraian / Esai</option>
+                                    <option value="MATCHING">Menjodohkan (Matching)</option>
+                                    <option value="CATEGORY_RESPONSE">Kategori / Benar-Salah Majemuk (Category Response)</option>
                                   </select>
 
                                   <button
@@ -579,7 +585,7 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
 
                               {!item.itemType && (
                                 <p className="text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
-                                  Silakan tentukan jenis soal (Pilihan Ganda, Benar/Salah, Isian, atau Uraian) pada menu di atas.
+                                  Silakan tentukan jenis soal (Pilihan Ganda, Benar/Salah, Isian, Uraian, Menjodohkan, atau Kategori) pada menu di atas.
                                 </p>
                               )}
 
@@ -600,6 +606,30 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                   rows={2}
                                 />
                               </div>
+
+                              {item.itemType === 'SHORT_ANSWER' && (
+                                <div className="flex items-center gap-2 pt-1">
+                                  <label className="text-xs font-semibold text-slate-600">Mode Respon (Opsional):</label>
+                                  <select
+                                    value={item.responseMode || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const updatedItems = writtenInst!.items.map((it) =>
+                                        it.id === item.id ? { ...it, responseMode: val ? (val as any) : undefined } : it
+                                      );
+                                      const updatedInstruments = activePackage.instruments.map((inst) =>
+                                        inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                      );
+                                      updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                    }}
+                                    className="text-xs p-1 border border-slate-300 rounded bg-white"
+                                  >
+                                    <option value="">-- Belum Ditentukan (Default) --</option>
+                                    <option value="SHORT_RESPONSE">Jawaban Singkat (Short Response)</option>
+                                    <option value="COMPLETION">Melengkapi Kalimat / Isian (Completion)</option>
+                                  </select>
+                                </div>
+                              )}
 
                               {(item.itemType === 'MULTIPLE_CHOICE' || item.itemType === 'MULTIPLE_SELECT') && (
                                 <div className="space-y-2 pl-4 border-l-2 border-blue-200">
@@ -684,6 +714,398 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                   >
                                     + Opsi Jawaban
                                   </button>
+                                </div>
+                              )}
+
+                              {item.itemType === 'MATCHING' && (
+                                <div className="space-y-4 pl-4 border-l-2 border-indigo-200">
+                                  {/* Premises */}
+                                  <div className="space-y-2">
+                                    <label className="block text-xs font-bold text-slate-700">Daftar Premis / Pernyataan Asal (Kolom Kiri):</label>
+                                    {(!item.matchingPremises || item.matchingPremises.length === 0) && (
+                                      <p className="text-xs text-slate-400 italic">Belum ada premis.</p>
+                                    )}
+                                    {(item.matchingPremises || []).map((premise, pIdx) => (
+                                      <div key={premise.id} className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-600 w-6">#{pIdx + 1}.</span>
+                                        <input
+                                          type="text"
+                                          value={premise.text}
+                                          onChange={(e) => {
+                                            const updatedPremises = item.matchingPremises?.map((p) =>
+                                              p.id === premise.id ? { ...p, text: e.target.value } : p
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingPremises: updatedPremises } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
+                                          placeholder="Teks premis / soal asal..."
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            const updatedPremises = item.matchingPremises?.filter((p) => p.id !== premise.id);
+                                            const updatedPairs = item.matchingPairs?.filter((pair) => pair.premiseId !== premise.id);
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingPremises: updatedPremises, matchingPairs: updatedPairs } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      onClick={() => {
+                                        const newPremise: MatchingAssessmentEntry = {
+                                          id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                          text: '',
+                                        };
+                                        const updatedPremises = [...(item.matchingPremises || []), newPremise];
+                                        const updatedItems = writtenInst!.items.map((it) =>
+                                          it.id === item.id ? { ...it, matchingPremises: updatedPremises } : it
+                                        );
+                                        const updatedInstruments = activePackage.instruments.map((inst) =>
+                                          inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                        );
+                                        updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                      }}
+                                      className="text-xs text-indigo-600 font-semibold hover:underline flex items-center gap-1"
+                                    >
+                                      + Tambah Premis
+                                    </button>
+                                  </div>
+
+                                  {/* Responses */}
+                                  <div className="space-y-2">
+                                    <label className="block text-xs font-bold text-slate-700">Daftar Respon / Pilihan Pasangan (Kolom Kanan):</label>
+                                    {(!item.matchingResponses || item.matchingResponses.length === 0) && (
+                                      <p className="text-xs text-slate-400 italic">Belum ada respon pasangan.</p>
+                                    )}
+                                    {(item.matchingResponses || []).map((resp, rIdx) => (
+                                      <div key={resp.id} className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-600 w-6">{String.fromCharCode(65 + rIdx)}.</span>
+                                        <input
+                                          type="text"
+                                          value={resp.text}
+                                          onChange={(e) => {
+                                            const updatedResp = item.matchingResponses?.map((r) =>
+                                              r.id === resp.id ? { ...r, text: e.target.value } : r
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingResponses: updatedResp } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
+                                          placeholder="Teks opsi pasangan..."
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            const updatedResp = item.matchingResponses?.filter((r) => r.id !== resp.id);
+                                            const updatedPairs = item.matchingPairs?.filter((pair) => pair.responseId !== resp.id);
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingResponses: updatedResp, matchingPairs: updatedPairs } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      onClick={() => {
+                                        const newResp: MatchingAssessmentEntry = {
+                                          id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                          text: '',
+                                        };
+                                        const updatedResp = [...(item.matchingResponses || []), newResp];
+                                        const updatedItems = writtenInst!.items.map((it) =>
+                                          it.id === item.id ? { ...it, matchingResponses: updatedResp } : it
+                                        );
+                                        const updatedInstruments = activePackage.instruments.map((inst) =>
+                                          inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                        );
+                                        updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                      }}
+                                      className="text-xs text-indigo-600 font-semibold hover:underline flex items-center gap-1"
+                                    >
+                                      + Tambah Respon
+                                    </button>
+                                  </div>
+
+                                  {/* Pairs / Kunci Pasangan */}
+                                  <div className="space-y-2 pt-2 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-700">Kunci Pasangan (Matching Pairs):</label>
+                                    {(!item.matchingPairs || item.matchingPairs.length === 0) && (
+                                      <p className="text-xs text-slate-400 italic">Belum ada pasangan kunci jawaban.</p>
+                                    )}
+                                    {(item.matchingPairs || []).map((pair, pIdx) => (
+                                      <div key={pIdx} className="flex items-center gap-2">
+                                        <select
+                                          value={pair.premiseId}
+                                          onChange={(e) => {
+                                            const updatedPairs = item.matchingPairs?.map((pr, idx) =>
+                                              idx === pIdx ? { ...pr, premiseId: e.target.value } : pr
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingPairs: updatedPairs } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded bg-white flex-1"
+                                        >
+                                          <option value="">-- Pilih Premis --</option>
+                                          {(item.matchingPremises || []).map((p, idx) => (
+                                            <option key={p.id} value={p.id}>
+                                              Premis #{idx + 1}: {p.text ? p.text.slice(0, 30) : '(kosong)'}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <span className="text-xs font-bold text-slate-500">➔</span>
+                                        <select
+                                          value={pair.responseId}
+                                          onChange={(e) => {
+                                            const updatedPairs = item.matchingPairs?.map((pr, idx) =>
+                                              idx === pIdx ? { ...pr, responseId: e.target.value } : pr
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingPairs: updatedPairs } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded bg-white flex-1"
+                                        >
+                                          <option value="">-- Pilih Respon Pasangan --</option>
+                                          {(item.matchingResponses || []).map((r, idx) => (
+                                            <option key={r.id} value={r.id}>
+                                              Respon {String.fromCharCode(65 + idx)}: {r.text ? r.text.slice(0, 30) : '(kosong)'}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          onClick={() => {
+                                            const updatedPairs = item.matchingPairs?.filter((_, idx) => idx !== pIdx);
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, matchingPairs: updatedPairs } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      onClick={() => {
+                                        const newPair: MatchingAssessmentPair = {
+                                          premiseId: '',
+                                          responseId: '',
+                                        };
+                                        const updatedPairs = [...(item.matchingPairs || []), newPair];
+                                        const updatedItems = writtenInst!.items.map((it) =>
+                                          it.id === item.id ? { ...it, matchingPairs: updatedPairs } : it
+                                        );
+                                        const updatedInstruments = activePackage.instruments.map((inst) =>
+                                          inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                        );
+                                        updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                      }}
+                                      className="text-xs text-indigo-600 font-semibold hover:underline flex items-center gap-1"
+                                    >
+                                      + Tambah Pasangan Kunci
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {item.itemType === 'CATEGORY_RESPONSE' && (
+                                <div className="space-y-4 pl-4 border-l-2 border-emerald-200">
+                                  {/* Categories */}
+                                  <div className="space-y-2">
+                                    <label className="block text-xs font-bold text-slate-700">Daftar Kategori Pilihan (misal: Benar / Salah):</label>
+                                    {(!item.categoryResponseCategories || item.categoryResponseCategories.length === 0) && (
+                                      <p className="text-xs text-slate-400 italic">Belum ada kategori pilihan.</p>
+                                    )}
+                                    {(item.categoryResponseCategories || []).map((cat, cIdx) => (
+                                      <div key={cat.id} className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-600 w-6">Cat #{cIdx + 1}:</span>
+                                        <input
+                                          type="text"
+                                          value={cat.label}
+                                          onChange={(e) => {
+                                            const updatedCats = item.categoryResponseCategories?.map((c) =>
+                                              c.id === cat.id ? { ...c, label: e.target.value } : c
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, categoryResponseCategories: updatedCats } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
+                                          placeholder="Label kategori (misal: Benar, Salah, Sesuai)..."
+                                        />
+                                        <button
+                                          onClick={() => {
+                                            const updatedCats = item.categoryResponseCategories?.filter((c) => c.id !== cat.id);
+                                            const updatedStmts = item.categoryResponseStatements?.map((s) =>
+                                              s.correctCategoryId === cat.id ? { ...s, correctCategoryId: '' } : s
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id
+                                                ? { ...it, categoryResponseCategories: updatedCats, categoryResponseStatements: updatedStmts }
+                                                : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      onClick={() => {
+                                        const newCat: CategoryResponseCategory = {
+                                          id: `cat-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                          label: '',
+                                        };
+                                        const updatedCats = [...(item.categoryResponseCategories || []), newCat];
+                                        const updatedItems = writtenInst!.items.map((it) =>
+                                          it.id === item.id ? { ...it, categoryResponseCategories: updatedCats } : it
+                                        );
+                                        const updatedInstruments = activePackage.instruments.map((inst) =>
+                                          inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                        );
+                                        updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                      }}
+                                      className="text-xs text-emerald-600 font-semibold hover:underline flex items-center gap-1"
+                                    >
+                                      + Tambah Kategori
+                                    </button>
+                                  </div>
+
+                                  {/* Statements */}
+                                  <div className="space-y-2 pt-2 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-700">Daftar Pernyataan & Kunci Kategori:</label>
+                                    {(!item.categoryResponseStatements || item.categoryResponseStatements.length === 0) && (
+                                      <p className="text-xs text-slate-400 italic">Belum ada butir pernyataan.</p>
+                                    )}
+                                    {(item.categoryResponseStatements || []).map((stmt, sIdx) => (
+                                      <div key={stmt.id} className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-600 w-6">#{sIdx + 1}.</span>
+                                        <input
+                                          type="text"
+                                          value={stmt.text}
+                                          onChange={(e) => {
+                                            const updatedStmts = item.categoryResponseStatements?.map((s) =>
+                                              s.id === stmt.id ? { ...s, text: e.target.value } : s
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, categoryResponseStatements: updatedStmts } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
+                                          placeholder="Teks butir pernyataan..."
+                                        />
+                                        <select
+                                          value={stmt.correctCategoryId || ''}
+                                          onChange={(e) => {
+                                            const updatedStmts = item.categoryResponseStatements?.map((s) =>
+                                              s.id === stmt.id ? { ...s, correctCategoryId: e.target.value } : s
+                                            );
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, categoryResponseStatements: updatedStmts } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-xs p-1.5 border border-slate-300 rounded bg-white w-44"
+                                        >
+                                          <option value="">-- Kunci Kategori --</option>
+                                          {(item.categoryResponseCategories || []).map((cat) => (
+                                            <option key={cat.id} value={cat.id}>
+                                              {cat.label || '(tanpa label)'}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          onClick={() => {
+                                            const updatedStmts = item.categoryResponseStatements?.filter((s) => s.id !== stmt.id);
+                                            const updatedItems = writtenInst!.items.map((it) =>
+                                              it.id === item.id ? { ...it, categoryResponseStatements: updatedStmts } : it
+                                            );
+                                            const updatedInstruments = activePackage.instruments.map((inst) =>
+                                              inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                            );
+                                            updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                          }}
+                                          className="text-red-500 hover:text-red-700 p-1"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      onClick={() => {
+                                        const newStmt: CategoryResponseStatement = {
+                                          id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                                          text: '',
+                                          correctCategoryId: '',
+                                        };
+                                        const updatedStmts = [...(item.categoryResponseStatements || []), newStmt];
+                                        const updatedItems = writtenInst!.items.map((it) =>
+                                          it.id === item.id ? { ...it, categoryResponseStatements: updatedStmts } : it
+                                        );
+                                        const updatedInstruments = activePackage.instruments.map((inst) =>
+                                          inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                        );
+                                        updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                      }}
+                                      className="text-xs text-emerald-600 font-semibold hover:underline flex items-center gap-1"
+                                    >
+                                      + Tambah Pernyataan
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </div>

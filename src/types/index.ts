@@ -722,8 +722,45 @@ export interface AssessmentPlan {
 }
 
 // ==========================================
-// CANONICAL ASSESSMENT PACKAGE (AUDIT 9B)
+// CANONICAL ASSESSMENT PACKAGE (AUDIT 9B & 9C.1)
 // ==========================================
+
+export type CognitiveDemand =
+  | 'RECALL_UNDERSTAND'
+  | 'APPLY'
+  | 'ANALYZE_REASON'
+  | 'EVALUATE_CREATE';
+
+export type AssessmentEvidenceType =
+  | 'KNOWLEDGE_RESPONSE'
+  | 'REASONING'
+  | 'ORAL_RESPONSE'
+  | 'PERFORMANCE'
+  | 'OBSERVATION'
+  | 'PRODUCT'
+  | 'PROJECT'
+  | 'PORTFOLIO';
+
+export type AssessmentStimulusType =
+  | 'NONE'
+  | 'TEXT'
+  | 'IMAGE'
+  | 'TABLE'
+  | 'CHART'
+  | 'DIAGRAM'
+  | 'SCENARIO'
+  | 'DATA'
+  | 'MATHEMATICAL_REPRESENTATION';
+
+export type AssessmentDifficultyTarget =
+  | 'BASIC'
+  | 'MODERATE'
+  | 'CHALLENGING';
+
+export type AssessmentStimulusOrigin =
+  | 'OFFICIAL_SOURCE'
+  | 'TEACHER_SOURCE'
+  | 'AI_SYNTHETIC';
 
 export interface AssessmentBlueprintItem {
   id: string;
@@ -735,6 +772,14 @@ export interface AssessmentBlueprintItem {
   instrumentItemIds: string[];
   order: number;
   status?: 'DRAFT' | 'REVIEWED';
+
+  // Audit 9C.1 Foundation Metadata (all optional, no fake defaults)
+  cognitiveDemand?: CognitiveDemand;
+  evidenceType?: AssessmentEvidenceType;
+  stimulusType?: AssessmentStimulusType;
+  difficultyTarget?: AssessmentDifficultyTarget;
+  recommendedItemCount?: number;
+  estimatedMinutes?: number;
 }
 
 // Written Test
@@ -743,7 +788,34 @@ export type WrittenAssessmentItemType =
   | 'MULTIPLE_SELECT'
   | 'TRUE_FALSE'
   | 'SHORT_ANSWER'
-  | 'ESSAY';
+  | 'ESSAY'
+  | 'MATCHING'
+  | 'CATEGORY_RESPONSE';
+
+export type ShortAnswerResponseMode =
+  | 'SHORT_RESPONSE'
+  | 'COMPLETION';
+
+export interface MatchingAssessmentEntry {
+  id: string;
+  text: string;
+}
+
+export interface MatchingAssessmentPair {
+  premiseId: string;
+  responseId: string;
+}
+
+export interface CategoryResponseStatement {
+  id: string;
+  text: string;
+  correctCategoryId?: string;
+}
+
+export interface CategoryResponseCategory {
+  id: string;
+  label: string;
+}
 
 export interface WrittenAssessmentOption {
   id: string;
@@ -758,7 +830,15 @@ export interface WrittenAssessmentItem {
   itemType: WrittenAssessmentItemType | '';
   prompt: string;
   stimulus?: string;
+  stimulusOrigin?: AssessmentStimulusOrigin;
+  stimulusSource?: string;
   options?: WrittenAssessmentOption[];
+  responseMode?: ShortAnswerResponseMode;
+  matchingPremises?: MatchingAssessmentEntry[];
+  matchingResponses?: MatchingAssessmentEntry[];
+  matchingPairs?: MatchingAssessmentPair[];
+  categoryResponseStatements?: CategoryResponseStatement[];
+  categoryResponseCategories?: CategoryResponseCategory[];
   order: number;
 }
 
@@ -899,13 +979,23 @@ export type AssessmentInstrument =
   | SelfPeerAssessmentInstrument;
 
 // Answer Key
+export type AssessmentAnswerType =
+  | 'EXACT'
+  | 'OPTION'
+  | 'MULTIPLE_OPTION'
+  | 'EXPECTED_RESPONSE'
+  | 'MATCHING'
+  | 'CATEGORY_RESPONSE';
+
 export interface AssessmentAnswerKey {
   id: string;
   instrumentId: string;
   instrumentItemId: string;
-  answerType: 'EXACT' | 'OPTION' | 'MULTIPLE_OPTION' | 'EXPECTED_RESPONSE';
+  answerType: AssessmentAnswerType;
   value?: string;
   optionIds?: string[];
+  matchingPairs?: MatchingAssessmentPair[];
+  categoryAnswers?: { statementId: string; categoryId: string }[];
   notes?: string;
 }
 
