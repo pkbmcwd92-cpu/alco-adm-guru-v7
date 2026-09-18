@@ -814,6 +814,118 @@ async function runRegressionTests() {
     'Case Q: Answer key with dangling categoryId is rejected'
   );
 
+  // ==========================================
+  // CASE R: Answer Key MATCHING Duplicate Premise Pairing Rejected
+  // ==========================================
+  console.log('\n--- Case R: Answer Key MATCHING Duplicate Premise Pairing ---');
+  const dupPremisePairPkg: AssessmentPackage = {
+    ...validMatchingPkg,
+    answerKeys: [
+      {
+        id: 'ak-dup-m',
+        instrumentId: 'inst-w-m',
+        instrumentItemId: 'item-m-1',
+        answerType: 'MATCHING',
+        matchingPairs: [
+          { premiseId: 'p-1', responseId: 'r-1' },
+          { premiseId: 'p-1', responseId: 'r-2' },
+        ],
+      },
+    ],
+  };
+  const valR = validateAssessmentPackage(dupPremisePairPkg, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: mockPlan,
+    tp: mockTP,
+    assessmentCriteria: mockCriteria,
+  });
+  assert(
+    !valR.valid && valR.errors.some((e) => e.includes('duplikat pemasangan untuk premiseId')),
+    'Case R: Answer key with duplicate premise pairing is rejected'
+  );
+
+  // ==========================================
+  // CASE S: Answer Key CATEGORY_RESPONSE Duplicate Statement Assignment Rejected
+  // ==========================================
+  console.log('\n--- Case S: Answer Key CATEGORY_RESPONSE Duplicate Statement Assignment ---');
+  const dupStmtAssignPkg: AssessmentPackage = {
+    ...validCategoryPkg,
+    answerKeys: [
+      {
+        id: 'ak-dup-c',
+        instrumentId: 'inst-w-c',
+        instrumentItemId: 'item-c-1',
+        answerType: 'CATEGORY_RESPONSE',
+        categoryAnswers: [
+          { statementId: 'stmt-1', categoryId: 'cat-true' },
+          { statementId: 'stmt-1', categoryId: 'cat-false' },
+        ],
+      },
+    ],
+  };
+  const valS = validateAssessmentPackage(dupStmtAssignPkg, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: mockPlan,
+    tp: mockTP,
+    assessmentCriteria: mockCriteria,
+  });
+  assert(
+    !valS.valid && valS.errors.some((e) => e.includes('duplikat penugasan kategori untuk statementId')),
+    'Case S: Answer key with duplicate statement assignment is rejected'
+  );
+
+  // ==========================================
+  // CASE T: Pure SSOT - Item Has No Answer Fields, Only AnswerKey Has Canonical Answer
+  // ==========================================
+  console.log('\n--- Case T: Pure SSOT Validation ---');
+  const pureSSOTMatchingPkg: AssessmentPackage = {
+    ...validMatchingPkg,
+    instruments: [
+      {
+        id: 'inst-w-m',
+        type: 'WRITTEN_TEST',
+        items: [
+          {
+            id: 'item-m-1',
+            itemType: 'MATCHING',
+            prompt: 'Soal matching tanpa field answer pada item',
+            matchingPremises: [
+              { id: 'p-1', text: 'Daun' },
+              { id: 'p-2', text: 'Akar' },
+            ],
+            matchingResponses: [
+              { id: 'r-1', text: 'Fotosintesis' },
+              { id: 'r-2', text: 'Menyerap air' },
+            ],
+            order: 1,
+          },
+        ],
+      } as WrittenAssessmentInstrument,
+    ],
+    answerKeys: [
+      {
+        id: 'ak-pure-m',
+        instrumentId: 'inst-w-m',
+        instrumentItemId: 'item-m-1',
+        answerType: 'MATCHING',
+        matchingPairs: [
+          { premiseId: 'p-1', responseId: 'r-1' },
+          { premiseId: 'p-2', responseId: 'r-2' },
+        ],
+      },
+    ],
+  };
+  const valT = validateAssessmentPackage(pureSSOTMatchingPkg, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: mockPlan,
+    tp: mockTP,
+    assessmentCriteria: mockCriteria,
+  });
+  assert(
+    valT.valid && valT.errors.length === 0,
+    'Case T: Pure SSOT validation succeeds with canonical answers exclusively in AssessmentAnswerKey'
+  );
+
   console.log(`\n=== REGRESSION TEST RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   if (failed > 0) {
     process.exit(1);

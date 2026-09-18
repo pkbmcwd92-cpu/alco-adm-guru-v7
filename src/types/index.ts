@@ -809,6 +809,7 @@ export interface MatchingAssessmentPair {
 export interface CategoryResponseStatement {
   id: string;
   text: string;
+  /** @deprecated Canonical answer berada pada AssessmentAnswerKey.categoryAnswers. Tidak boleh ada conflicting dual source. */
   correctCategoryId?: string;
 }
 
@@ -836,6 +837,7 @@ export interface WrittenAssessmentItem {
   responseMode?: ShortAnswerResponseMode;
   matchingPremises?: MatchingAssessmentEntry[];
   matchingResponses?: MatchingAssessmentEntry[];
+  /** @deprecated Canonical answer berada pada AssessmentAnswerKey.matchingPairs. Tidak boleh ada conflicting dual source. */
   matchingPairs?: MatchingAssessmentPair[];
   categoryResponseStatements?: CategoryResponseStatement[];
   categoryResponseCategories?: CategoryResponseCategory[];
