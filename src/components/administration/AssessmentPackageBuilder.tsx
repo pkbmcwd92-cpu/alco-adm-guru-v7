@@ -81,22 +81,15 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
   onSaveAssessmentPackage,
   onDeleteAssessmentPackage,
 }) => {
-  const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
-    return assessmentPlans.length > 0 ? assessmentPlans[0].id : '';
-  });
+  const readyPlans = assessmentPlans.filter((p) => p.workflowStatus === 'SIAP');
+
+  const [selectedPlanId, setSelectedPlanId] = useState<string>('');
 
   const [activeTab, setActiveTab] = useState<'overview' | 'blueprint' | 'instruments' | 'keys_rubrics' | 'validation'>('overview');
   const [activeInstType, setActiveInstType] = useState<AssessmentInstrumentType | ''>('');
 
   const selectedPlan = assessmentPlans.find((p) => p.id === selectedPlanId);
   const activePackage = assessmentPackages.find((pkg) => pkg.assessmentPlanId === selectedPlanId);
-
-  // Synchronize default plan selection
-  useEffect(() => {
-    if (!selectedPlanId && assessmentPlans.length > 0) {
-      setSelectedPlanId(assessmentPlans[0].id);
-    }
-  }, [assessmentPlans, selectedPlanId]);
 
   // Synchronize active instrument tab
   useEffect(() => {
@@ -121,7 +114,7 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
 
   // Helper to handle creation of new empty package
   const handleCreatePackage = () => {
-    if (!selectedPlan) return;
+    if (!selectedPlan || selectedPlan.workflowStatus !== 'SIAP') return;
     const newPkg = createEmptyAssessmentPackage(selectedPlan, academicSetting.id, workspace?.id);
     onSaveAssessmentPackage(newPkg);
   };
@@ -134,17 +127,22 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     });
   };
 
-  // If no AssessmentPlans exist
-  if (assessmentPlans.length === 0) {
+  // If no AssessmentPlans exist with SIAP status
+  if (readyPlans.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center max-w-2xl mx-auto my-8">
         <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
           <BookOpen className="w-8 h-8" />
         </div>
-        <h3 className="text-xl font-bold text-slate-800 mb-2">Belum Ada Rencana Asesmen (Assessment Plan)</h3>
+        <h3 className="text-xl font-bold text-slate-800 mb-2">Belum ada Rencana Asesmen berstatus SIAP.</h3>
         <p className="text-slate-600 mb-6 text-sm">
-          Perangkat Asesmen dibuat berdasarkan Rencana Asesmen yang telah disiapkan. Silakan atur dan konfirmasi Rencana Asesmen terlebih dahulu di tab <strong>Rencana Asesmen</strong>.
+          Perangkat Asesmen hanya dapat dibuat dari Rencana Asesmen yang telah dikonfirmasi berstatus <strong>SIAP</strong>. Silakan selesaikan dan konfirmasi Rencana Asesmen terlebih dahulu di tab <strong>Rencana Asesmen</strong>.
         </p>
+        {assessmentPlans.length > 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 p-2.5 rounded-lg border border-amber-200 inline-block">
+            Terdapat {assessmentPlans.length} Rencana Asesmen yang belum berstatus SIAP.
+          </p>
+        )}
       </div>
     );
   }
@@ -162,11 +160,15 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
             onChange={(e) => setSelectedPlanId(e.target.value)}
             className="w-full md:w-96 px-3 py-2 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-sm"
           >
-            {assessmentPlans.map((plan) => (
-              <option key={plan.id} value={plan.id}>
-                {plan.displayLabel || plan.title} [{plan.workflowStatus}]
-              </option>
-            ))}
+            <option value="">-- Pilih Rencana Asesmen --</option>
+            {assessmentPlans.map((plan) => {
+              const isReady = plan.workflowStatus === 'SIAP';
+              return (
+                <option key={plan.id} value={plan.id} disabled={!isReady}>
+                  {plan.displayLabel || plan.title} [{plan.workflowStatus}]{!isReady ? ' - (Belum SIAP)' : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
 
@@ -211,8 +213,16 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
         </div>
       )}
 
-      {/* No Package Exists State */}
-      {!activePackage ? (
+      {/* Unselected Plan or No Package Exists State */}
+      {!selectedPlanId ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-xl mx-auto">
+          <BookOpen className="w-12 h-12 text-slate-400 mx-auto mb-3" />
+          <h4 className="text-lg font-bold text-slate-800 mb-2">Pilih Rencana Asesmen</h4>
+          <p className="text-slate-600 text-sm">
+            Silakan pilih salah satu Rencana Asesmen berstatus <strong>SIAP</strong> pada dropdown di atas untuk melihat atau menyusun Perangkat Asesmen.
+          </p>
+        </div>
+      ) : !activePackage ? (
         <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-xl mx-auto">
           <FolderPlus className="w-12 h-12 text-slate-400 mx-auto mb-3" />
           <h4 className="text-lg font-bold text-slate-800 mb-2">Belum Ada Perangkat Asesmen Untuk Rencana Ini</h4>
@@ -490,12 +500,9 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                           let writtenInst = activePackage.instruments.find((i) => i.type === 'WRITTEN_TEST') as WrittenAssessmentInstrument | undefined;
                           const newItem: WrittenAssessmentItem = {
                             id: `item-${Date.now()}`,
-                            itemType: 'MULTIPLE_CHOICE',
+                            itemType: '',
                             prompt: '',
-                            options: [
-                              { id: `opt-1-${Date.now()}`, label: 'A', text: '' },
-                              { id: `opt-2-${Date.now()}`, label: 'B', text: '' },
-                            ],
+                            options: [],
                             order: writtenInst ? writtenInst.items.length + 1 : 1,
                           };
 
@@ -547,9 +554,12 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                     }}
                                     className="text-xs p-1 border border-slate-300 rounded font-semibold"
                                   >
+                                    <option value="">-- Pilih Jenis Soal --</option>
                                     <option value="MULTIPLE_CHOICE">Pilihan Ganda</option>
                                     <option value="MULTIPLE_SELECT">Pilihan Ganda Kompleks</option>
-                                    <option value="ESSAY">Uraian / Isian</option>
+                                    <option value="TRUE_FALSE">Benar / Salah</option>
+                                    <option value="SHORT_ANSWER">Isian Singkat</option>
+                                    <option value="ESSAY">Uraian / Esai</option>
                                   </select>
 
                                   <button
@@ -566,6 +576,12 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                   </button>
                                 </div>
                               </div>
+
+                              {!item.itemType && (
+                                <p className="text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
+                                  Silakan tentukan jenis soal (Pilihan Ganda, Benar/Salah, Isian, atau Uraian) pada menu di atas.
+                                </p>
+                              )}
 
                               <div>
                                 <label className="block text-xs font-semibold text-slate-600 mb-1">Pertanyaan / Soal</label>
@@ -588,6 +604,9 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                               {(item.itemType === 'MULTIPLE_CHOICE' || item.itemType === 'MULTIPLE_SELECT') && (
                                 <div className="space-y-2 pl-4 border-l-2 border-blue-200">
                                   <label className="block text-xs font-bold text-slate-700">Opsi Jawaban:</label>
+                                  {(!item.options || item.options.length === 0) && (
+                                    <p className="text-xs text-slate-400 italic">Belum ada opsi jawaban. Klik tombol di bawah untuk menambahkan opsi.</p>
+                                  )}
                                   {(item.options || []).map((opt) => (
                                     <div key={opt.id} className="flex items-center gap-2">
                                       <input
@@ -627,6 +646,21 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                         className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
                                         placeholder="Teks opsi jawaban..."
                                       />
+                                      <button
+                                        onClick={() => {
+                                          const updatedOpts = item.options?.filter((o) => o.id !== opt.id);
+                                          const updatedItems = writtenInst!.items.map((it) =>
+                                            it.id === item.id ? { ...it, options: updatedOpts } : it
+                                          );
+                                          const updatedInstruments = activePackage.instruments.map((inst) =>
+                                            inst.type === 'WRITTEN_TEST' ? { ...writtenInst!, items: updatedItems } : inst
+                                          );
+                                          updatePackage({ ...activePackage, instruments: updatedInstruments });
+                                        }}
+                                        className="text-red-500 hover:text-red-700 p-1"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   ))}
                                   <button
@@ -755,14 +789,9 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                     onClick={() => {
                       const newRubric: AssessmentRubric = {
                         id: `rubric-${Date.now()}`,
-                        title: 'Rubrik Penilaian Kinerja / Produk',
-                        criteria: [{ id: `crit-${Date.now()}`, label: 'Kesesuaian dengan TP/KD' }],
-                        scale: [
-                          { id: `scale-1-${Date.now()}`, label: 'Perlu Bimbingan', score: 1, order: 1, descriptor: '' },
-                          { id: `scale-2-${Date.now()}`, label: 'Cukup', score: 2, order: 2, descriptor: '' },
-                          { id: `scale-3-${Date.now()}`, label: 'Baik', score: 3, order: 3, descriptor: '' },
-                          { id: `scale-4-${Date.now()}`, label: 'Sangat Baik', score: 4, order: 4, descriptor: '' },
-                        ],
+                        title: '',
+                        criteria: [],
+                        scale: [],
                       };
                       updatePackage({ ...activePackage, rubrics: [...activePackage.rubrics, newRubric] });
                     }}
@@ -778,15 +807,16 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                   <div className="space-y-4">
                     {activePackage.rubrics.map((rub) => (
                       <div key={rub.id} className="p-4 border border-slate-200 rounded-lg bg-slate-50 space-y-3">
-                        <div className="flex justify-between items-center">
+                        <div className="flex justify-between items-center gap-2">
                           <input
                             type="text"
+                            placeholder="Judul Rubrik Penilaian..."
                             value={rub.title}
                             onChange={(e) => {
                               const updated = activePackage.rubrics.map((r) => (r.id === rub.id ? { ...r, title: e.target.value } : r));
                               updatePackage({ ...activePackage, rubrics: updated });
                             }}
-                            className="font-bold text-sm bg-white p-1 border border-slate-300 rounded text-slate-800"
+                            className="font-bold text-sm bg-white p-1.5 border border-slate-300 rounded text-slate-800 flex-1"
                           />
                           <button
                             onClick={() => {
@@ -799,13 +829,145 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                           </button>
                         </div>
 
-                        <div className="text-xs">
-                          <span className="font-bold text-slate-700">Kriteria Rubrik:</span>
-                          {rub.criteria.map((crit) => (
-                            <div key={crit.id} className="ml-2 my-1 flex items-center gap-2">
-                              <span className="font-semibold text-slate-600">• {crit.label}</span>
-                            </div>
-                          ))}
+                        {/* Criteria Section */}
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-xs text-slate-700">Kriteria Penilaian:</span>
+                            <button
+                              onClick={() => {
+                                const newCrit = { id: `crit-${Date.now()}`, label: '' };
+                                const updated = activePackage.rubrics.map((r) =>
+                                  r.id === rub.id ? { ...r, criteria: [...r.criteria, newCrit] } : r
+                                );
+                                updatePackage({ ...activePackage, rubrics: updated });
+                              }}
+                              className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Tambah Kriteria
+                            </button>
+                          </div>
+                          {rub.criteria.length === 0 ? (
+                            <p className="text-xs text-slate-400 italic">Belum ada kriteria. Silakan tambahkan kriteria penilaian.</p>
+                          ) : (
+                            rub.criteria.map((crit, cIdx) => (
+                              <div key={crit.id} className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-slate-500 w-5">{cIdx + 1}.</span>
+                                <input
+                                  type="text"
+                                  value={crit.label}
+                                  onChange={(e) => {
+                                    const updatedCrits = rub.criteria.map((c) => (c.id === crit.id ? { ...c, label: e.target.value } : c));
+                                    const updated = activePackage.rubrics.map((r) =>
+                                      r.id === rub.id ? { ...r, criteria: updatedCrits } : r
+                                    );
+                                    updatePackage({ ...activePackage, rubrics: updated });
+                                  }}
+                                  placeholder="Label kriteria (misal: Ketepatan Konsep, Sistematika)..."
+                                  className="text-xs p-1.5 border border-slate-300 rounded flex-1 bg-white"
+                                />
+                                <button
+                                  onClick={() => {
+                                    const updatedCrits = rub.criteria.filter((c) => c.id !== crit.id);
+                                    const updated = activePackage.rubrics.map((r) =>
+                                      r.id === rub.id ? { ...r, criteria: updatedCrits } : r
+                                    );
+                                    updatePackage({ ...activePackage, rubrics: updated });
+                                  }}
+                                  className="text-red-500 hover:text-red-700 p-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        {/* Scale Section */}
+                        <div className="space-y-2 pt-2 border-t border-slate-200">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-xs text-slate-700">Tingkat Skala Penilaian:</span>
+                            <button
+                              onClick={() => {
+                                const newScale = {
+                                  id: `scale-${Date.now()}`,
+                                  label: '',
+                                  order: rub.scale.length + 1,
+                                  score: undefined,
+                                  descriptor: '',
+                                };
+                                const updated = activePackage.rubrics.map((r) =>
+                                  r.id === rub.id ? { ...r, scale: [...r.scale, newScale] } : r
+                                );
+                                updatePackage({ ...activePackage, rubrics: updated });
+                              }}
+                              className="text-xs text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Tambah Tingkat Skala
+                            </button>
+                          </div>
+                          {rub.scale.length === 0 ? (
+                            <p className="text-xs text-slate-400 italic">Belum ada tingkat skala. Silakan tambahkan skala penilaian.</p>
+                          ) : (
+                            rub.scale.map((sc, sIdx) => (
+                              <div key={sc.id} className="p-2 bg-white border border-slate-200 rounded space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold text-slate-500 w-5">#{sIdx + 1}</span>
+                                  <input
+                                    type="text"
+                                    value={sc.label}
+                                    onChange={(e) => {
+                                      const updatedScale = rub.scale.map((s) => (s.id === sc.id ? { ...s, label: e.target.value } : s));
+                                      const updated = activePackage.rubrics.map((r) =>
+                                        r.id === rub.id ? { ...r, scale: updatedScale } : r
+                                      );
+                                      updatePackage({ ...activePackage, rubrics: updated });
+                                    }}
+                                    placeholder="Label skala (misal: Baru Memulai, Berkembang, Mahir)..."
+                                    className="text-xs p-1 border border-slate-300 rounded flex-1 bg-white font-medium"
+                                  />
+                                  <input
+                                    type="number"
+                                    value={sc.score !== undefined ? sc.score : ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                                      const updatedScale = rub.scale.map((s) => (s.id === sc.id ? { ...s, score: val } : s));
+                                      const updated = activePackage.rubrics.map((r) =>
+                                        r.id === rub.id ? { ...r, scale: updatedScale } : r
+                                      );
+                                      updatePackage({ ...activePackage, rubrics: updated });
+                                    }}
+                                    placeholder="Skor (opsional)"
+                                    className="text-xs p-1 border border-slate-300 rounded w-28 bg-white"
+                                  />
+                                  <button
+                                    onClick={() => {
+                                      const updatedScale = rub.scale.filter((s) => s.id !== sc.id);
+                                      const updated = activePackage.rubrics.map((r) =>
+                                        r.id === rub.id ? { ...r, scale: updatedScale } : r
+                                      );
+                                      updatePackage({ ...activePackage, rubrics: updated });
+                                    }}
+                                    className="text-red-500 hover:text-red-700 p-1"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <input
+                                  type="text"
+                                  value={sc.descriptor || ''}
+                                  onChange={(e) => {
+                                    const updatedScale = rub.scale.map((s) => (s.id === sc.id ? { ...s, descriptor: e.target.value } : s));
+                                    const updated = activePackage.rubrics.map((r) =>
+                                      r.id === rub.id ? { ...r, scale: updatedScale } : r
+                                    );
+                                    updatePackage({ ...activePackage, rubrics: updated });
+                                  }}
+                                  placeholder="Deskriptor capaian untuk tingkat ini (opsional)..."
+                                  className="text-xs p-1 border border-slate-200 rounded w-full text-slate-600 bg-slate-50"
+                                />
+                              </div>
+                            ))
+                          )}
                         </div>
                       </div>
                     ))}

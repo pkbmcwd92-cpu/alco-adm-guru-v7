@@ -148,14 +148,26 @@ export async function generateAssessment(context: DocumentGenerationContext): Pr
     // CANONICAL DATA MODE
     // Locate active canonical AssessmentPackage
     let pkg: AssessmentPackage | undefined;
-    if (context.activeAssessmentPackageId && context.assessmentPackages) {
-      pkg = context.assessmentPackages.find((p) => p.id === context.activeAssessmentPackageId);
-    } else if (context.assessmentPackages && context.assessmentPackages.length > 0) {
-      pkg = context.assessmentPackages.find((p) => p.workflowStatus === 'SIAP');
-    }
+    const packages = context.assessmentPackages || [];
 
-    if (!pkg) {
-      throw new Error('Dokumen Asesmen tidak dapat dicetak: Perangkat Asesmen (AssessmentPackage) belum tersedia.');
+    if (context.activeAssessmentPackageId) {
+      pkg = packages.find((p) => p.id === context.activeAssessmentPackageId);
+      if (!pkg) {
+        throw new Error(
+          `Dokumen Asesmen tidak dapat dicetak: Perangkat Asesmen dengan ID "${context.activeAssessmentPackageId}" tidak ditemukan.`
+        );
+      }
+    } else {
+      const siapPackages = packages.filter((p) => p.workflowStatus === 'SIAP');
+      if (siapPackages.length === 0) {
+        throw new Error('Dokumen Asesmen tidak dapat dicetak: Perangkat Asesmen (AssessmentPackage) belum tersedia.');
+      }
+      if (siapPackages.length > 1) {
+        throw new Error(
+          `Dokumen Asesmen tidak dapat dicetak: Terdapat lebih dari satu (${siapPackages.length}) Perangkat Asesmen berstatus SIAP. Silakan tentukan perangkat asesmen yang akan dicetak secara eksplisit.`
+        );
+      }
+      pkg = siapPackages[0];
     }
 
     // Validate Package

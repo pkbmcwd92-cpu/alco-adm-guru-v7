@@ -755,7 +755,7 @@ export interface WrittenAssessmentOption {
 export interface WrittenAssessmentItem {
   id: string;
   blueprintItemId?: string;
-  itemType: WrittenAssessmentItemType;
+  itemType: WrittenAssessmentItemType | '';
   prompt: string;
   stimulus?: string;
   options?: WrittenAssessmentOption[];

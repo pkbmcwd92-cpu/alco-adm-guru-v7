@@ -11,6 +11,7 @@ import {
   K13Analysis,
   AssessmentCriterion,
   WrittenAssessmentInstrument,
+  WrittenAssessmentOption,
   OralAssessmentInstrument,
   PerformanceAssessmentInstrument,
   ObservationAssessmentInstrument,
@@ -244,7 +245,27 @@ export function validateAssessmentPackage(
   }
 
   // 4. Instrument-Specific Validation
+  const validRubricIds = new Set(pkg.rubrics.map((r) => r.id));
+  const validScoringGuideIds = new Set(pkg.scoringGuides.map((sg) => sg.id));
+
   pkg.instruments.forEach((inst) => {
+    // Rubric and Scoring Guide reference integrity on all instruments
+    const instWithRefs = inst as { id: string; type: string; rubricId?: string; scoringGuideId?: string };
+    if (instWithRefs.rubricId) {
+      if (!validRubricIds.has(instWithRefs.rubricId)) {
+        errors.push(
+          `Instrumen "${inst.type}" (ID: ${inst.id}) merujuk pada rubricId [${instWithRefs.rubricId}] yang tidak ditemukan (dangling rubric reference).`
+        );
+      }
+    }
+    if (instWithRefs.scoringGuideId) {
+      if (!validScoringGuideIds.has(instWithRefs.scoringGuideId)) {
+        errors.push(
+          `Instrumen "${inst.type}" (ID: ${inst.id}) merujuk pada scoringGuideId [${instWithRefs.scoringGuideId}] yang tidak ditemukan (dangling scoring guide reference).`
+        );
+      }
+    }
+
     switch (inst.type) {
       case 'WRITTEN_TEST': {
         const written = inst as WrittenAssessmentInstrument;
@@ -252,6 +273,9 @@ export function validateAssessmentPackage(
           errors.push('Tes Tertulis wajib memiliki minimal 1 butir soal.');
         } else {
           written.items.forEach((item, itemIdx) => {
+            if (!item.itemType || (item.itemType as string) === '') {
+              errors.push(`Soal tertulis #${itemIdx + 1} belum menentukan jenis soal (itemType unresolved).`);
+            }
             if (!item.prompt || item.prompt.trim() === '') {
               errors.push(`Soal tertulis #${itemIdx + 1} belum memiliki teks pertanyaan (prompt).`);
             }
@@ -359,31 +383,128 @@ export function validateAssessmentPackage(
     }
   });
 
-  // 5. Answer Keys Reference Integrity
+  // 5. Answer Keys Referential Integrity (Fail Closed)
+  const instrumentMap = new Map<string, AssessmentInstrument>();
+  const allItemLookup = new Map<
+    string,
+    { instrumentId: string; instrumentType: string; options?: WrittenAssessmentOption[] }
+  >();
+
+  pkg.instruments.forEach((inst) => {
+    instrumentMap.set(inst.id, inst);
+    switch (inst.type) {
+      case 'WRITTEN_TEST':
+        (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id, instrumentType: 'WRITTEN_TEST', options: it.options });
+        });
+        break;
+      case 'ORAL_TEST':
+        (inst as OralAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id, instrumentType: 'ORAL_TEST' });
+        });
+        break;
+      case 'PERFORMANCE':
+        (inst as PerformanceAssessmentInstrument).aspects?.forEach((asp) => {
+          allItemLookup.set(asp.id, { instrumentId: inst.id, instrumentType: 'PERFORMANCE' });
+        });
+        break;
+      case 'OBSERVATION':
+        (inst as ObservationAssessmentInstrument).aspects?.forEach((asp) => {
+          allItemLookup.set(asp.id, { instrumentId: inst.id, instrumentType: 'OBSERVATION' });
+        });
+        break;
+      case 'SELF_ASSESSMENT':
+      case 'PEER_ASSESSMENT':
+        (inst as SelfPeerAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id, instrumentType: inst.type });
+        });
+        break;
+      default:
+        break;
+    }
+  });
+
   pkg.answerKeys.forEach((ak, akIdx) => {
+    // 1. instrumentId must resolve to canonical instrument
+    if (!ak.instrumentId || !instrumentMap.has(ak.instrumentId)) {
+      errors.push(
+        `Kunci jawaban #${akIdx + 1} merujuk pada instrumentId [${ak.instrumentId}] yang tidak ditemukan (dangling reference).`
+      );
+      return;
+    }
+
+    // 2. instrumentItemId must resolve to canonical item
+    if (!ak.instrumentItemId) {
+      errors.push(`Kunci jawaban #${akIdx + 1} tidak memiliki referensi butir instrumen (instrumentItemId kosong).`);
+      return;
+    }
+
+    const itemMeta = allItemLookup.get(ak.instrumentItemId);
+    if (!itemMeta) {
+      errors.push(
+        `Kunci jawaban #${akIdx + 1} merujuk pada instrumentItemId [${ak.instrumentItemId}] yang tidak ditemukan (dangling reference).`
+      );
+      return;
+    }
+
+    // 3. Item must actually belong to instrumentId
+    if (itemMeta.instrumentId !== ak.instrumentId) {
+      errors.push(
+        `Kunci jawaban #${akIdx + 1} merujuk pada butir [${ak.instrumentItemId}] milik instrumen lain [${itemMeta.instrumentId}] (cross-instrument reference).`
+      );
+      return;
+    }
+
+    // 4. For OPTION / MULTIPLE_OPTION, optionIds check
     if (ak.answerType === 'OPTION' || ak.answerType === 'MULTIPLE_OPTION') {
-      const writtenInst = pkg.instruments.find((i) => i.id === ak.instrumentId) as WrittenAssessmentInstrument | undefined;
-      if (writtenInst && writtenInst.items) {
-        const item = writtenInst.items.find((it) => it.id === ak.instrumentItemId);
-        if (item && item.options && ak.optionIds) {
-          const validOptIds = new Set(item.options.map((o) => o.id));
-          ak.optionIds.forEach((optId) => {
-            if (!validOptIds.has(optId)) {
-              errors.push(`Kunci jawaban #${akIdx + 1} merujuk pada opsi ID [${optId}] yang tidak ada pada pilihan soal.`);
-            }
-          });
-        }
+      if (!itemMeta.options || itemMeta.options.length === 0) {
+        errors.push(
+          `Kunci jawaban #${akIdx + 1} bertipe pilihan opsi, tetapi butir instrumen tidak memiliki daftar opsi pilihan.`
+        );
+      } else if (!ak.optionIds || ak.optionIds.length === 0) {
+        errors.push(`Kunci jawaban #${akIdx + 1} bertipe pilihan opsi tetapi tidak mencantumkan optionIds.`);
+      } else {
+        const validOptIds = new Set(itemMeta.options.map((o) => o.id));
+        ak.optionIds.forEach((optId) => {
+          if (!validOptIds.has(optId)) {
+            errors.push(
+              `Kunci jawaban #${akIdx + 1} merujuk pada opsi ID [${optId}] yang tidak ada pada pilihan butir soal.`
+            );
+          }
+        });
       }
     }
   });
 
   // 6. Rubrics Structure Integrity (No default levels/descriptors fabricated if empty!)
   pkg.rubrics.forEach((rub, rubIdx) => {
+    if (!rub.title || rub.title.trim() === '') {
+      errors.push(`Rubrik #${rubIdx + 1} belum memiliki judul.`);
+    }
     if (!rub.criteria || rub.criteria.length === 0) {
-      errors.push(`Rubrik #${rubIdx + 1} ("${rub.title}") wajib memiliki minimal 1 kriteria.`);
+      errors.push(`Rubrik "${rub.title || '#' + (rubIdx + 1)}" wajib memiliki minimal 1 kriteria.`);
+    } else {
+      rub.criteria.forEach((crit, cIdx) => {
+        if (!crit.label || crit.label.trim() === '') {
+          errors.push(`Kriteria #${cIdx + 1} pada rubrik "${rub.title || '#' + (rubIdx + 1)}" belum memiliki label.`);
+        }
+      });
     }
     if (!rub.scale || rub.scale.length === 0) {
-      errors.push(`Rubrik #${rubIdx + 1} ("${rub.title}") wajib memiliki minimal 1 tingkat skala penilaian.`);
+      errors.push(`Rubrik "${rub.title || '#' + (rubIdx + 1)}" wajib memiliki minimal 1 tingkat skala penilaian.`);
+    } else {
+      rub.scale.forEach((sc, sIdx) => {
+        if (!sc.label || sc.label.trim() === '') {
+          errors.push(`Tingkat skala #${sIdx + 1} pada rubrik "${rub.title || '#' + (rubIdx + 1)}" belum memiliki label.`);
+        }
+      });
+    }
+
+    if (rub.instrumentId && !instrumentMap.has(rub.instrumentId)) {
+      errors.push(`Rubrik "${rub.title}" merujuk pada instrumentId [${rub.instrumentId}] yang tidak ditemukan.`);
+    }
+    if (rub.instrumentItemId && !allItemLookup.has(rub.instrumentItemId)) {
+      errors.push(`Rubrik "${rub.title}" merujuk pada instrumentItemId [${rub.instrumentItemId}] yang tidak ditemukan.`);
     }
   });
 
@@ -544,6 +665,85 @@ export function invalidateAssessmentPackageDependencies(
       }
     });
   }
+
+  // 5. Check Rubric and Scoring Guide References on Instruments
+  const validRubricIds = new Set(pkg.rubrics.map((r) => r.id));
+  const validScoringGuideIds = new Set(pkg.scoringGuides.map((sg) => sg.id));
+
+  pkg.instruments.forEach((inst) => {
+    const instWithRefs = inst as { id: string; type: string; rubricId?: string; scoringGuideId?: string };
+    if (instWithRefs.rubricId && !validRubricIds.has(instWithRefs.rubricId)) {
+      reasons.push(
+        `Instrumen "${inst.type}" (ID: ${inst.id}) merujuk pada rubricId [${instWithRefs.rubricId}] yang telah dihapus.`
+      );
+    }
+    if (instWithRefs.scoringGuideId && !validScoringGuideIds.has(instWithRefs.scoringGuideId)) {
+      reasons.push(
+        `Instrumen "${inst.type}" (ID: ${inst.id}) merujuk pada scoringGuideId [${instWithRefs.scoringGuideId}] yang telah dihapus.`
+      );
+    }
+  });
+
+  // 6. Check Answer Keys References Integrity
+  const instrumentMap = new Map(pkg.instruments.map((i) => [i.id, i]));
+  const allItemLookup = new Map<
+    string,
+    { instrumentId: string; options?: WrittenAssessmentOption[] }
+  >();
+
+  pkg.instruments.forEach((inst) => {
+    switch (inst.type) {
+      case 'WRITTEN_TEST':
+        (inst as WrittenAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id, options: it.options });
+        });
+        break;
+      case 'ORAL_TEST':
+        (inst as OralAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id });
+        });
+        break;
+      case 'PERFORMANCE':
+        (inst as PerformanceAssessmentInstrument).aspects?.forEach((asp) => {
+          allItemLookup.set(asp.id, { instrumentId: inst.id });
+        });
+        break;
+      case 'OBSERVATION':
+        (inst as ObservationAssessmentInstrument).aspects?.forEach((asp) => {
+          allItemLookup.set(asp.id, { instrumentId: inst.id });
+        });
+        break;
+      case 'SELF_ASSESSMENT':
+      case 'PEER_ASSESSMENT':
+        (inst as SelfPeerAssessmentInstrument).items?.forEach((it) => {
+          allItemLookup.set(it.id, { instrumentId: inst.id });
+        });
+        break;
+      default:
+        break;
+    }
+  });
+
+  pkg.answerKeys.forEach((ak) => {
+    if (!instrumentMap.has(ak.instrumentId)) {
+      reasons.push(`Kunci jawaban merujuk pada instrumentId [${ak.instrumentId}] yang telah dihapus.`);
+    } else if (!allItemLookup.has(ak.instrumentItemId)) {
+      reasons.push(`Kunci jawaban merujuk pada butir [${ak.instrumentItemId}] yang telah dihapus.`);
+    } else {
+      const meta = allItemLookup.get(ak.instrumentItemId)!;
+      if (meta.instrumentId !== ak.instrumentId) {
+        reasons.push(`Kunci jawaban merujuk pada butir milik instrumen lain (cross-instrument reference).`);
+      }
+      if ((ak.answerType === 'OPTION' || ak.answerType === 'MULTIPLE_OPTION') && ak.optionIds) {
+        const validOptIds = new Set((meta.options || []).map((o) => o.id));
+        ak.optionIds.forEach((optId) => {
+          if (!validOptIds.has(optId)) {
+            reasons.push(`Kunci jawaban merujuk pada opsi ID [${optId}] yang telah dihapus.`);
+          }
+        });
+      }
+    }
+  });
 
   if (reasons.length > 0) {
     const invalidatedPkg: AssessmentPackage = {

@@ -413,7 +413,359 @@ async function runRegressionTests() {
     throw new Error('FAILED: Export was NOT blocked for non-SIAP package');
   }
 
-  console.log('\n=== ALL AUDIT 9B REGRESSION TESTS (A-O) PASSED SUCCESSFULLY! ===');
+  // TEST P: Empty rubric (title: '', criteria: [], scale: []) cannot be confirmed to SIAP
+  console.log('Test P: Empty rubric cannot be confirmed to SIAP -> FAIL');
+  const pkgWithEmptyRubric: AssessmentPackage = {
+    ...validLinkedPkg,
+    rubrics: [
+      {
+        id: 'rub-empty',
+        title: '',
+        criteria: [],
+        scale: [],
+      },
+    ],
+  };
+  const valP = validateAssessmentPackage(pkgWithEmptyRubric, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valP.valid || !valP.errors.some((e) => e.includes('belum memiliki judul') || e.includes('wajib memiliki minimal 1 kriteria'))) {
+    throw new Error(`FAILED: Empty rubric should fail validation. Errors: ${valP.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Empty rubric correctly rejected with errors: "${valP.errors.filter(e => e.includes('Rubrik')).join(' | ')}"`);
+
+  // TEST Q: Rubric with title and custom criteria/scale passes validation
+  console.log('Test Q: Rubric with explicit title and custom criteria/scale -> PASS');
+  const pkgWithValidRubric: AssessmentPackage = {
+    ...validLinkedPkg,
+    rubrics: [
+      {
+        id: 'rub-1',
+        title: 'Rubrik Penilaian Presentasi IPAS',
+        criteria: [{ id: 'c1', label: 'Penguasaan Materi Fotosintesis' }],
+        scale: [
+          { id: 's1', label: 'Mulai Berkembang', order: 1, descriptor: 'Menjelaskan sebagian' },
+          { id: 's2', label: 'Mahir', order: 2, descriptor: 'Menjelaskan secara utuh' },
+        ],
+      },
+    ],
+  };
+  const valQ = validateAssessmentPackage(pkgWithValidRubric, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (!valQ.valid) {
+    throw new Error(`FAILED: Custom valid rubric failed validation: ${valQ.errors.join('; ')}`);
+  }
+  console.log('  PASSED: Rubric with explicit title and custom criteria/scale validated cleanly.');
+
+  // TEST R: Written item with unresolved itemType: '' cannot be marked SIAP
+  console.log('Test R: Written item with unresolved itemType: "" -> FAIL');
+  const pkgWithUnresolvedItem: AssessmentPackage = {
+    ...validLinkedPkg,
+    instruments: [
+      {
+        id: 'inst-w',
+        type: 'WRITTEN_TEST',
+        items: [{ id: 'q1', itemType: '' as any, prompt: 'Jelaskan fotosintesis', order: 1 }],
+      },
+      { id: 'inst-o', type: 'OBSERVATION', aspects: [{ id: 'obs-1', label: 'Sikap' }] },
+    ],
+  };
+  const valR = validateAssessmentPackage(pkgWithUnresolvedItem, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valR.valid || !valR.errors.some((e) => e.includes('itemType unresolved'))) {
+    throw new Error(`FAILED: Unresolved itemType should fail validation. Errors: ${valR.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Unresolved written item rejected: "${valR.errors.find(e => e.includes('itemType unresolved'))}"`);
+
+  // TEST S: Written multiple choice item without options cannot be marked SIAP
+  console.log('Test S: Written multiple choice item without options -> FAIL');
+  const pkgWithNoOptionsMC: AssessmentPackage = {
+    ...validLinkedPkg,
+    instruments: [
+      {
+        id: 'inst-w',
+        type: 'WRITTEN_TEST',
+        items: [{ id: 'q1', itemType: 'MULTIPLE_CHOICE', prompt: 'Berikut adalah...', options: [], order: 1 }],
+      },
+      { id: 'inst-o', type: 'OBSERVATION', aspects: [{ id: 'obs-1', label: 'Sikap' }] },
+    ],
+  };
+  const valS = validateAssessmentPackage(pkgWithNoOptionsMC, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valS.valid || !valS.errors.some((e) => e.includes('minimal 2 opsi'))) {
+    throw new Error(`FAILED: MC item without options should fail validation. Errors: ${valS.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Multiple choice without options rejected: "${valS.errors.find(e => e.includes('minimal 2 opsi'))}"`);
+
+  // TEST T: AnswerKey with dangling instrumentId -> FAIL
+  console.log('Test T: AnswerKey with dangling instrumentId -> FAIL');
+  const pkgDanglingAkInst: AssessmentPackage = {
+    ...validLinkedPkg,
+    answerKeys: [
+      {
+        id: 'ak-1',
+        instrumentId: 'non-existent-inst',
+        instrumentItemId: 'q1',
+        answerType: 'EXACT',
+        value: 'Kunci jawaban teks',
+      },
+    ],
+  };
+  const valT = validateAssessmentPackage(pkgDanglingAkInst, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valT.valid || !valT.errors.some((e) => e.includes('instrumentId [non-existent-inst] yang tidak ditemukan'))) {
+    throw new Error(`FAILED: AnswerKey with dangling instrumentId should fail. Errors: ${valT.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Dangling instrumentId in AnswerKey rejected: "${valT.errors.find(e => e.includes('instrumentId'))}"`);
+
+  // TEST U: AnswerKey with dangling instrumentItemId -> FAIL
+  console.log('Test U: AnswerKey with dangling instrumentItemId -> FAIL');
+  const pkgDanglingAkItem: AssessmentPackage = {
+    ...validLinkedPkg,
+    answerKeys: [
+      {
+        id: 'ak-1',
+        instrumentId: 'inst-w',
+        instrumentItemId: 'non-existent-item',
+        answerType: 'EXACT',
+        value: 'Kunci jawaban teks',
+      },
+    ],
+  };
+  const valU = validateAssessmentPackage(pkgDanglingAkItem, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valU.valid || !valU.errors.some((e) => e.includes('instrumentItemId [non-existent-item] yang tidak ditemukan'))) {
+    throw new Error(`FAILED: AnswerKey with dangling instrumentItemId should fail. Errors: ${valU.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Dangling instrumentItemId in AnswerKey rejected: "${valU.errors.find(e => e.includes('instrumentItemId'))}"`);
+
+  // TEST V: AnswerKey referencing item of another instrument (cross-instrument) -> FAIL
+  console.log('Test V: AnswerKey cross-instrument reference -> FAIL');
+  const pkgCrossInstAk: AssessmentPackage = {
+    ...validLinkedPkg,
+    answerKeys: [
+      {
+        id: 'ak-1',
+        instrumentId: 'inst-w', // claims to be inst-w
+        instrumentItemId: 'obs-1', // but obs-1 belongs to inst-o
+        answerType: 'EXACT',
+        value: 'Kunci jawaban teks',
+      },
+    ],
+  };
+  const valV = validateAssessmentPackage(pkgCrossInstAk, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valV.valid || !valV.errors.some((e) => e.includes('cross-instrument reference') || e.includes('milik instrumen lain'))) {
+    throw new Error(`FAILED: AnswerKey with cross-instrument item should fail. Errors: ${valV.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Cross-instrument reference in AnswerKey rejected: "${valV.errors.find(e => e.includes('cross-instrument') || e.includes('milik instrumen lain'))}"`);
+
+  // TEST W: Instrument referencing non-existent rubricId or scoringGuideId -> FAIL
+  console.log('Test W: Instrument referencing non-existent rubricId/scoringGuideId -> FAIL');
+  const pkgDanglingRubricRef: AssessmentPackage = {
+    ...validLinkedPkg,
+    instruments: [
+      {
+        id: 'inst-w',
+        type: 'WRITTEN_TEST',
+        rubricId: 'ghost-rubric-999',
+        items: [{ id: 'q1', itemType: 'ESSAY', prompt: 'Jelaskan X', order: 1 }],
+      } as any,
+      { id: 'inst-o', type: 'OBSERVATION', aspects: [{ id: 'obs-1', label: 'Sikap' }] },
+    ],
+  };
+  const valW = validateAssessmentPackage(pkgDanglingRubricRef, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (valW.valid || !valW.errors.some((e) => e.includes('dangling rubric reference'))) {
+    throw new Error(`FAILED: Dangling rubricId on instrument should fail. Errors: ${valW.errors.join('; ')}`);
+  }
+  console.log(`  PASSED: Dangling rubric reference rejected: "${valW.errors.find(e => e.includes('dangling rubric reference'))}"`);
+
+  // TEST X: InvalidateAssessmentPackageDependencies detects dangling rubric and answer key
+  console.log('Test X: Dependency invalidator detects dangling rubric and answer key -> PERLU_DILENGKAPI');
+  const pkgWithValidRubAndAk: AssessmentPackage = {
+    ...validLinkedPkg,
+    workflowStatus: 'SIAP',
+    rubrics: [{ id: 'rub-x', title: 'Rubrik X', criteria: [{ id: 'cx', label: 'K' }], scale: [{ id: 'sx', label: 'S', order: 1 }] }],
+    instruments: [
+      {
+        id: 'inst-w',
+        type: 'WRITTEN_TEST',
+        rubricId: 'rub-x',
+        items: [{ id: 'q1', itemType: 'ESSAY', prompt: 'Jelaskan X', order: 1 }],
+      } as any,
+      { id: 'inst-o', type: 'OBSERVATION', aspects: [{ id: 'obs-1', label: 'Sikap' }] },
+    ],
+    answerKeys: [
+      {
+        id: 'ak-x',
+        instrumentId: 'inst-w',
+        instrumentItemId: 'q1',
+        answerType: 'EXACT',
+        value: 'Kunci X',
+      },
+    ],
+  };
+
+  // Simulate deleted rubric by clearing pkg.rubrics
+  const pkgDeletedRubric: AssessmentPackage = {
+    ...pkgWithValidRubAndAk,
+    rubrics: [], // rubric 'rub-x' is deleted!
+  };
+  const invX = invalidateAssessmentPackageDependencies(pkgDeletedRubric, {
+    academicSetting: mockMerdekaSetting,
+    assessmentPlan: {
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    },
+    tp: mockTP,
+  });
+  if (!invX.isInvalidated || invX.package.workflowStatus !== 'PERLU_DILENGKAPI' || !invX.reasons.some(r => r.includes('rubricId [rub-x] yang telah dihapus'))) {
+    throw new Error(`FAILED: Deleting referenced rubric should invalidate package. Reasons: ${invX.reasons.join('; ')}`);
+  }
+  console.log(`  PASSED: Dependency invalidator invalidated status to PERLU_DILENGKAPI: "${invX.reasons.find(r => r.includes('rubricId'))}"`);
+
+  // TEST Y: Export package selection ambiguity handling
+  console.log('Test Y: Export with multiple SIAP packages and missing activeAssessmentPackageId is blocked');
+  const siapPkg1: AssessmentPackage = {
+    ...validLinkedPkg,
+    id: 'pkg-siap-1',
+    workflowStatus: 'SIAP',
+    title: 'Perangkat Asesmen Paket A',
+  };
+  const siapPkg2: AssessmentPackage = {
+    ...validLinkedPkg,
+    id: 'pkg-siap-2',
+    workflowStatus: 'SIAP',
+    title: 'Perangkat Asesmen Paket B',
+  };
+
+  let ambiguousBlocked = false;
+  try {
+    await generateAssessment({
+      school: mockSchool,
+      profile: mockProfile,
+      academicSetting: mockMerdekaSetting,
+      tp: mockTP,
+      documentMode: 'data',
+      assessmentPlans: [{
+        ...mockAssessmentPlan,
+        instruments: [
+          { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+          { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+        ],
+      }],
+      assessmentPackages: [siapPkg1, siapPkg2],
+      // activeAssessmentPackageId is omitted!
+      skipDownload: true,
+    });
+  } catch (err: any) {
+    ambiguousBlocked = true;
+    console.log(`  PASSED: Ambiguous export blocked with error: "${err.message}"`);
+  }
+  if (!ambiguousBlocked) {
+    throw new Error('FAILED: Ambiguous export was NOT blocked when multiple SIAP packages exist without active ID');
+  }
+
+  // Export with exact activeAssessmentPackageId succeeds
+  console.log('Test Y2: Export with explicit activeAssessmentPackageId succeeds');
+  const exportResult = await generateAssessment({
+    school: mockSchool,
+    profile: mockProfile,
+    academicSetting: mockMerdekaSetting,
+    tp: mockTP,
+    documentMode: 'data',
+    assessmentPlans: [{
+      ...mockAssessmentPlan,
+      instruments: [
+        { id: 'i1', type: 'WRITTEN_TEST', label: 'Tes' },
+        { id: 'i2', type: 'OBSERVATION', label: 'Obs' },
+      ],
+    }],
+    assessmentPackages: [siapPkg1, siapPkg2],
+    activeAssessmentPackageId: 'pkg-siap-2',
+    skipDownload: true,
+  });
+  if (!exportResult || !exportResult.blob) {
+    throw new Error('FAILED: Export with explicit activeAssessmentPackageId failed');
+  }
+  console.log('  PASSED: Export with explicit activeAssessmentPackageId succeeded cleanly.');
+
+  console.log('\n=== ALL AUDIT 9B REGRESSION TESTS (A-Y) PASSED SUCCESSFULLY! ===');
 }
 
 runRegressionTests();
