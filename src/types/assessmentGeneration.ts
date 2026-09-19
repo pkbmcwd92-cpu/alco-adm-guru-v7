@@ -1,6 +1,9 @@
 import {
+  AssessmentDifficultyTarget,
   AssessmentEvidenceType,
   AssessmentInstrumentType,
+  AssessmentStimulusType,
+  CognitiveDemand,
 } from './index';
 
 // ==========================================
@@ -196,6 +199,79 @@ export interface AssessmentGenerationSpec {
 
   resolution: {
     status: AssessmentGenerationResolutionStatus;
+    issues: AssessmentGenerationIssue[];
+  };
+}
+
+// ==========================================
+// AUDIT 9C.3: COVERAGE & ASSEMBLY PLAN
+// ==========================================
+
+export type AssessmentAssemblyMode =
+  | 'AUTO_RECOMMENDED'
+  | 'TEACHER_DEFINED';
+
+export type AssessmentAllocationUnit =
+  | 'ITEM'
+  | 'TASK'
+  | 'EVIDENCE'
+  | 'OBSERVATION';
+
+export interface AssessmentGenerationConstraints {
+  assemblyMode: AssessmentAssemblyMode;
+  durationMinutes?: number;
+  requestedTotalItems?: number;
+}
+
+export interface AssessmentCoverageUnit {
+  id: string;
+
+  objectiveRefId: string;
+  criterionId?: string;
+
+  evidenceType?: AssessmentEvidenceType;
+  instrumentType?: AssessmentInstrumentType;
+
+  allocationUnit: AssessmentAllocationUnit;
+  recommendedCount?: number;
+
+  cognitiveDemand?: CognitiveDemand;
+  stimulusType?: AssessmentStimulusType;
+  difficultyTarget?: AssessmentDifficultyTarget;
+
+  assessmentIndicator?: string;
+  materialOrContext?: string;
+
+  provenance: AssessmentGenerationRule[];
+
+  status:
+    | 'RESOLVED'
+    | 'NEEDS_REVIEW'
+    | 'BLOCKED';
+
+  issues: AssessmentGenerationIssue[];
+}
+
+export interface AssessmentGenerationPlan {
+  generationSpec: AssessmentGenerationSpec;
+
+  constraints: AssessmentGenerationConstraints;
+
+  coverageUnits: AssessmentCoverageUnit[];
+
+  summary: {
+    objectiveCount: number;
+    criterionCount: number;
+    coverageUnitCount: number;
+    allocatedCount?: number;
+  };
+
+  resolution: {
+    status:
+      | 'RESOLVED'
+      | 'NEEDS_REVIEW'
+      | 'BLOCKED';
+
     issues: AssessmentGenerationIssue[];
   };
 }

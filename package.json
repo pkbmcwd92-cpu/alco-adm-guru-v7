@@ -19,7 +19,9 @@
     "test:audit8": "tsx scripts/testAuditNo8LearningPlanRegression.ts",
     "test:audit9a": "tsx scripts/testAuditNo9AAssessmentMasterRegression.ts",
     "test:audit9b": "tsx scripts/testAuditNo9BAssessmentPackageRegression.ts",
-    "test:audit9c:schema": "tsx scripts/testAuditNo9CSchemaFoundationRegression.ts"
+    "test:audit9c:schema": "tsx scripts/testAuditNo9CSchemaFoundationRegression.ts",
+    "test:audit9c2:generation-spec": "tsx scripts/testAuditNo9C2GenerationSpecRegression.ts",
+    "test:audit9c3:generation-plan": "tsx scripts/testAuditNo9C3GenerationPlanRegression.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
