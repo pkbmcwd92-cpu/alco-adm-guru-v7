@@ -8,15 +8,6 @@ import {
 } from '../types';
 import { resolveSubjectInput } from '../data/curriculum/resolver';
 
-const PROV_CP_OFFICIAL: AssessmentGenerationRule = {
-  id: 'PROV-CP-BSKAP-032-2024',
-  sourceType: 'OFFICIAL',
-  description: 'Elemen dan Capaian Pembelajaran mata pelajaran resmi kurikulum.',
-  sourceTitle: 'Keputusan Kepala BSKAP No. 032/H/KR/2024',
-  sourceAgency: 'BSKAP Kemendikbudristek',
-  sourceVersion: '2024',
-};
-
 const PROV_PEDAGOGICAL: AssessmentGenerationRule = {
   id: 'PROV-PEDAGOGICAL-STANDARD',
   sourceType: 'PEDAGOGICAL_RULE',
@@ -97,7 +88,7 @@ function createPjokProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
+    provenance: [PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -175,7 +166,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
+    provenance: [PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -260,7 +251,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
+    provenance: [PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -342,7 +333,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
+    provenance: [PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -422,7 +413,7 @@ function createPendidikanPancasilaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
+    provenance: [PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }

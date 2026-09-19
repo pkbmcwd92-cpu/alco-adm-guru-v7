@@ -2,6 +2,7 @@ import {
   AcademicSetting,
   AssessmentCriterion,
   AssessmentPlan,
+  AssessmentSourceContext,
   K13Analysis,
   TPData,
 } from '../src/types';
@@ -1049,6 +1050,164 @@ async function runRegressionSuite() {
   assert(
     hasNoAIFeatures,
     'Case BL: Spec strictly contains zero AI prompts, LLM models, generated questions, or budgeting constructs'
+  );
+
+  // ==========================================
+  // FINAL CLEANUP 9C.2 REGRESSION: BM s/d BU
+  // ==========================================
+
+  // Check specific profiles: PJOK, Bahasa Indonesia, Matematika, IPA, Pendidikan Pancasila
+  const profilePjokFinal = resolveSubjectAssessmentProfile('PJOK');
+  const profileBindoFinal = resolveSubjectAssessmentProfile('Bahasa Indonesia');
+  const profileMatFinal = resolveSubjectAssessmentProfile('Matematika');
+  const profileIpaFinal = resolveSubjectAssessmentProfile('IPA');
+  const profilePancasilaFinal = resolveSubjectAssessmentProfile('Pendidikan Pancasila');
+  const allSpecificProfiles = [
+    profilePjokFinal,
+    profileBindoFinal,
+    profileMatFinal,
+    profileIpaFinal,
+    profilePancasilaFinal,
+  ];
+
+  // Case BM: Specific Subject Profile tidak memiliki hardcoded PROV-CP-BSKAP-032-2024
+  const hasProvCp032 = allSpecificProfiles.some((p) =>
+    p.provenance.some((prov) => prov.id === 'PROV-CP-BSKAP-032-2024')
+  );
+  assert(
+    !hasProvCp032,
+    'Case BM: Specific Subject Profiles do NOT contain hardcoded PROV-CP-BSKAP-032-2024'
+  );
+
+  // Case BN: Specific Subject Profile tidak memiliki nomor keputusan CP statis
+  const hasStaticDecreeInProfiles = allSpecificProfiles.some((p) =>
+    p.provenance.some(
+      (prov) =>
+        (prov.sourceTitle && /Keputusan|BSKAP|Permendikbud|BKPDM/i.test(prov.sourceTitle)) ||
+        prov.sourceType === 'OFFICIAL'
+    )
+  );
+  assert(
+    !hasStaticDecreeInProfiles,
+    'Case BN: Specific Subject Profiles do NOT contain static CP decree numbers or OFFICIAL regulation claims'
+  );
+
+  // Case BO: Specific Subject Profile tetap memiliki pedagogical provenance
+  const allHavePedagogical = allSpecificProfiles.every((p) =>
+    p.provenance.some((prov) => prov.sourceType === 'PEDAGOGICAL_RULE')
+  );
+  assert(
+    allHavePedagogical,
+    'Case BO: Specific Subject Profiles retain valid PEDAGOGICAL_RULE provenance'
+  );
+
+  // Case BP: Evidence rules tetap bekerja setelah CP provenance dihapus
+  const samplePjokRec = mapObjectiveToEvidence({
+    objective: {
+      id: 'tp-pjok-test',
+      sourceType: 'TP',
+      text: 'Mempraktikkan gerak dasar manipulatif melempar bola',
+      criterionIds: [],
+    },
+    subjectProfile: profilePjokFinal,
+    plannedInstrumentTypes: ['PERFORMANCE'],
+  });
+  assert(
+    samplePjokRec.evidenceTypes.includes('PERFORMANCE') &&
+      samplePjokRec.recommendedInstrumentTypes.includes('PERFORMANCE') &&
+      samplePjokRec.confidence === 'RULE_BASED',
+    'Case BP: Evidence recommendation rules function properly without CP regulation provenance'
+  );
+
+  // Case BQ: canonicalSourceContext dengan CANONICAL_CURRICULUM tetap diteruskan ke GenerationSpec
+  const canonicalContextItem: AssessmentSourceContext = {
+    id: 'SRC-CP-RESOLVED',
+    sourceType: 'CANONICAL_CURRICULUM',
+    title: 'Capaian Pembelajaran Resmi Resolusi Kurikulum Aktif',
+    sourceRef: 'REG-CANONICAL-2026',
+    revision: '2026.1',
+  };
+  const specBQ = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+    canonicalSourceContext: [canonicalContextItem],
+  });
+  const foundCanonicalInSpec = specBQ.sourceContext.find((s) => s.id === 'SRC-CP-RESOLVED');
+  assert(
+    foundCanonicalInSpec !== undefined &&
+      foundCanonicalInSpec.sourceType === 'CANONICAL_CURRICULUM' &&
+      foundCanonicalInSpec.sourceRef === 'REG-CANONICAL-2026',
+    'Case BQ: canonicalSourceContext with CANONICAL_CURRICULUM is accurately preserved in GenerationSpec'
+  );
+
+  // Case BR: Tanpa canonicalSourceContext, GenerationSpec tidak menciptakan CP official source sendiri
+  const specBR = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const hasCreatedOfficialCP = specBR.sourceContext.some(
+    (s) => s.sourceType === 'CANONICAL_CURRICULUM' || s.sourceType === 'OFFICIAL_GUIDANCE'
+  );
+  assert(
+    !hasCreatedOfficialCP,
+    'Case BR: Without canonicalSourceContext input, GenerationSpec does NOT invent or fabricate official CP sources'
+  );
+
+  // Case BS: Tidak ada hardcoded 032/H/KR/2024, 046/H/KR/2025, 020 Tahun 2026 di subjectAssessmentProfileService.ts
+  const fs = await import('fs');
+  const path = await import('path');
+  const serviceFilePath = path.join(process.cwd(), 'src/services/subjectAssessmentProfileService.ts');
+  const serviceFileContent = fs.readFileSync(serviceFilePath, 'utf-8');
+  const containsHardcodedDecrees =
+    serviceFileContent.includes('032/H/KR/2024') ||
+    serviceFileContent.includes('046/H/KR/2025') ||
+    serviceFileContent.includes('020 Tahun 2026') ||
+    serviceFileContent.includes('PROV-CP-BSKAP');
+  assert(
+    !containsHardcodedDecrees,
+    'Case BS: subjectAssessmentProfileService.ts contains zero hardcoded CP decree references or PROV-CP-BSKAP'
+  );
+
+  // Case BT: AssessmentPlan tetap immutable
+  const planForBT: AssessmentPlan = { ...mockPlanMatSiap, title: 'Plan Immutability BT' };
+  const beforePlanSnapshotBT = JSON.stringify(planForBT);
+  resolveAssessmentGenerationSpec({
+    assessmentPlan: planForBT,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    beforePlanSnapshotBT === JSON.stringify(planForBT),
+    'Case BT: AssessmentPlan is strictly immutable across resolution lifecycle'
+  );
+
+  // Case BU: Resolution behavior 9C.2 tidak berubah (RESOLVED, NEEDS_REVIEW, BLOCKED)
+  const specBuResolved = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const specBuReview = resolveAssessmentGenerationSpec({
+    assessmentPlan: planSeni,
+    academicSetting: settingSeniMusik,
+    tp: tpSeniMusik,
+  });
+  const specBuBlocked = resolveAssessmentGenerationSpec({
+    assessmentPlan: { ...mockPlanMatSiap, workflowStatus: 'DRAFT' },
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+  });
+  assert(
+    specBuResolved.resolution.status === 'RESOLVED' &&
+      specBuReview.resolution.status === 'NEEDS_REVIEW' &&
+      specBuBlocked.resolution.status === 'BLOCKED',
+    'Case BU: Resolution behavior 9C.2 is fully preserved (RESOLVED, NEEDS_REVIEW, BLOCKED fail-closed)'
   );
 
   console.log(`\n=== REGRESSION TEST RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
