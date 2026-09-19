@@ -284,3 +284,209 @@ export interface AssessmentGenerationPlan {
     issues: AssessmentGenerationIssue[];
   };
 }
+
+// ==========================================
+// AUDIT 9C.4: AI ASSESSMENT PACKAGE GENERATOR
+// ==========================================
+
+export type AssessmentGeneratedContentSource =
+  | 'CANONICAL'
+  | 'OFFICIAL_GUIDANCE'
+  | 'TEACHER'
+  | 'AI_DRAFT'
+  | 'AI_SYNTHETIC';
+
+export interface AssessmentTeacherContext {
+  instructions?: string;
+  focusAreas?: string[];
+  localContext?: string;
+  preferredStimulusTypes?: AssessmentStimulusType[];
+}
+
+export interface AssessmentGenerationSource {
+  id: string;
+  sourceType:
+    | 'TEACHER_PROVIDED'
+    | 'TEXTBOOK'
+    | 'OFFICIAL_REFERENCE'
+    | 'CURRICULUM_EXCERPT';
+  title: string;
+  content: string;
+  provenance?: AssessmentGenerationRule;
+}
+
+export interface AssessmentGenerationContractUnit {
+  coverageUnitId: string;
+  objectiveRefId: string;
+  criterionId?: string;
+  objectiveText: string;
+  criterionText?: string;
+  instrumentType: AssessmentInstrumentType;
+  allocationUnit: AssessmentAllocationUnit;
+  requiredCount: number;
+  cognitiveDemand?: CognitiveDemand;
+  stimulusType?: AssessmentStimulusType;
+  difficultyTarget?: AssessmentDifficultyTarget;
+  assessmentIndicator?: string;
+  materialOrContext?: string;
+  indicatorSource?: AssessmentGeneratedContentSource;
+  materialSource?: AssessmentGeneratedContentSource;
+}
+
+export interface AssessmentGenerationContract {
+  assessmentPlanId: string;
+  assessmentPackageId: string;
+  curriculumContext: ResolvedAssessmentCurriculumContext;
+  gradeCalibration?: AssessmentGradeCalibrationProfile;
+  subjectProfile: SubjectAssessmentProfile;
+  sourceContext: AssessmentSourceContext[];
+  units: AssessmentGenerationContractUnit[];
+}
+
+export interface AssessmentAIGenerationRequest {
+  systemPrompt: string;
+  userPrompt: string;
+  generationContract: AssessmentGenerationContract;
+}
+
+export interface AssessmentAIGenerationRawResponse {
+  rawText: string;
+}
+
+export interface AssessmentAIGenerationProvider {
+  generate(
+    request: AssessmentAIGenerationRequest
+  ): Promise<AssessmentAIGenerationRawResponse>;
+}
+
+// Intermediate Typed Draft Structures
+export interface GeneratedItemUnit {
+  allocationUnit: 'ITEM';
+  coverageUnitId: string;
+  objectiveRefId: string;
+  criterionId?: string;
+  instrumentType: AssessmentInstrumentType;
+  itemType:
+    | 'MULTIPLE_CHOICE'
+    | 'MULTIPLE_SELECT'
+    | 'TRUE_FALSE'
+    | 'SHORT_ANSWER'
+    | 'ESSAY'
+    | 'MATCHING'
+    | 'CATEGORY_RESPONSE';
+  prompt: string;
+  stimulus?: string;
+  stimulusOrigin?: 'OFFICIAL_SOURCE' | 'TEACHER_SOURCE' | 'AI_SYNTHETIC';
+  stimulusSource?: string;
+  options?: { id?: string; text: string; isCorrect?: boolean }[];
+  matchingPremises?: { id: string; text: string }[];
+  matchingResponses?: { id: string; text: string }[];
+  categoryStatements?: { id: string; text: string }[];
+  categoryCategories?: { id: string; label: string }[];
+  proposedAnswer?: {
+    answerType:
+      | 'EXACT'
+      | 'OPTION'
+      | 'MULTIPLE_OPTION'
+      | 'EXPECTED_RESPONSE'
+      | 'MATCHING'
+      | 'CATEGORY_RESPONSE';
+    value?: string;
+    optionIndices?: number[];
+    matchingPairs?: { premise: string; response: string }[];
+    categoryAnswers?: { statement: string; category: string }[];
+    explanation?: string;
+  };
+  scoringGuideDraft?: {
+    instructions?: string;
+    maxScore?: number;
+  };
+}
+
+export interface GeneratedTaskUnit {
+  allocationUnit: 'TASK';
+  coverageUnitId: string;
+  objectiveRefId: string;
+  criterionId?: string;
+  instrumentType: AssessmentInstrumentType;
+  taskTitle: string;
+  taskPrompt: string;
+  instructions?: string;
+  expectedDeliverable?: string;
+  aspects?: { label: string; description?: string; weight?: number }[];
+  rubricDraft?: {
+    title: string;
+    criteria: { label: string; indicator?: string; weight?: number }[];
+    scale: { label: string; score?: number; descriptor?: string; order: number }[];
+  };
+  scoringGuideDraft?: {
+    instructions?: string;
+    maxScore?: number;
+  };
+}
+
+export interface GeneratedEvidenceUnit {
+  allocationUnit: 'EVIDENCE';
+  coverageUnitId: string;
+  objectiveRefId: string;
+  criterionId?: string;
+  instrumentType: AssessmentInstrumentType;
+  instructions: string;
+  evidenceRequirements: string[];
+  rubricDraft?: {
+    title: string;
+    criteria: { label: string; indicator?: string; weight?: number }[];
+    scale: { label: string; score?: number; descriptor?: string; order: number }[];
+  };
+  scoringGuideDraft?: {
+    instructions?: string;
+    maxScore?: number;
+  };
+}
+
+export interface GeneratedObservationUnit {
+  allocationUnit: 'OBSERVATION';
+  coverageUnitId: string;
+  objectiveRefId: string;
+  criterionId?: string;
+  instrumentType: AssessmentInstrumentType;
+  recordingScheme?: string;
+  instructions?: string;
+  aspects: { label: string; indicator?: string }[];
+  rubricDraft?: {
+    title: string;
+    criteria: { label: string; indicator?: string }[];
+    scale: { label: string; score?: number; descriptor?: string; order: number }[];
+  };
+}
+
+export type GeneratedAssessmentUnit =
+  | GeneratedItemUnit
+  | GeneratedTaskUnit
+  | GeneratedEvidenceUnit
+  | GeneratedObservationUnit;
+
+// 9C.4 Input and Result Contracts
+export interface GenerateAssessmentPackageInput {
+  generationPlan: AssessmentGenerationPlan;
+  teacherContext?: AssessmentTeacherContext;
+  sourceMaterials?: AssessmentGenerationSource[];
+  existingPackage?: import('./index').AssessmentPackage;
+  provider?: AssessmentAIGenerationProvider;
+}
+
+export type AssessmentGenerationResultStatus =
+  | 'GENERATED'
+  | 'PARTIAL'
+  | 'BLOCKED'
+  | 'FAILED';
+
+export interface AssessmentGenerationResult {
+  status: AssessmentGenerationResultStatus;
+  generatedPackage?: import('./index').AssessmentPackage;
+  contract?: AssessmentGenerationContract;
+  generatedUnits: GeneratedAssessmentUnit[];
+  failedCoverageUnitIds: string[];
+  issues: AssessmentGenerationIssue[];
+}
+

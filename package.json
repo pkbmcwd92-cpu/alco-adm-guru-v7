@@ -22,6 +22,7 @@
     "test:audit9c:schema": "tsx scripts/testAuditNo9CSchemaFoundationRegression.ts",
     "test:audit9c2:generation-spec": "tsx scripts/testAuditNo9C2GenerationSpecRegression.ts",
     "test:audit9c3:generation-plan": "tsx scripts/testAuditNo9C3GenerationPlanRegression.ts",
+    "test:audit9c4:ai-generator": "tsx scripts/testAuditNo9C4AIGeneratorRegression.ts",
     "test:regulatory2026": "tsx scripts/testAudit2026RegulatoryCompatibility.ts"
   },
   "dependencies": {
