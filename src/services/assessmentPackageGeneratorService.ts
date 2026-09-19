@@ -419,13 +419,23 @@ export function buildGenerationContract(
         : crit.name
       : undefined;
 
-    const indicatorSource: AssessmentGeneratedContentSource = cov.assessmentIndicator
-      ? 'TEACHER'
-      : 'AI_DRAFT';
+    const assessmentIndicator =
+      typeof cov.assessmentIndicator === 'string' && cov.assessmentIndicator.trim()
+        ? cov.assessmentIndicator.trim()
+        : undefined;
 
-    const materialSource: AssessmentGeneratedContentSource = cov.materialOrContext
-      ? 'TEACHER'
-      : 'AI_SYNTHETIC';
+    const indicatorSource: AssessmentGeneratedContentSource | undefined = assessmentIndicator
+      ? ((cov as any).indicatorSource || 'TEACHER')
+      : undefined;
+
+    const materialOrContext =
+      typeof cov.materialOrContext === 'string' && cov.materialOrContext.trim()
+        ? cov.materialOrContext.trim()
+        : undefined;
+
+    const materialSource: AssessmentGeneratedContentSource | undefined = materialOrContext
+      ? ((cov as any).materialSource || 'TEACHER')
+      : undefined;
 
     return {
       coverageUnitId: cov.id,
@@ -439,8 +449,8 @@ export function buildGenerationContract(
       cognitiveDemand: cov.cognitiveDemand,
       stimulusType: cov.stimulusType,
       difficultyTarget: cov.difficultyTarget,
-      assessmentIndicator: cov.assessmentIndicator,
-      materialOrContext: cov.materialOrContext,
+      assessmentIndicator,
+      materialOrContext,
       indicatorSource,
       materialSource,
     };
@@ -1367,7 +1377,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
 
       case 'PERFORMANCE': {
         const aspects: PerformanceAspect[] = [];
-        let combinedTask = '';
+        let combinedTask: string | undefined;
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
 
@@ -1381,7 +1391,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
           if (!combinedTask) {
-            combinedTask = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
+            combinedTask = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || taskUnit.expectedDeliverable;
           }
 
           if (taskUnit.aspects && taskUnit.aspects.length > 0) {
@@ -1446,7 +1456,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PERFORMANCE',
           title: 'Instrumen Penilaian Kinerja / Praktik (Draf AI)',
-          task: combinedTask,
+          task: combinedTask!,
           instructions: undefined,
           aspects: aspects.length > 0 ? aspects : undefined,
           rubricId,
@@ -1585,7 +1595,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PORTFOLIO',
           title: 'Instrumen Asesmen Portofolio (Draf AI)',
-          instructions: portfolioInstructions || '',
+          instructions: portfolioInstructions,
           evidenceRequirements: evidenceReqs,
           rubricId,
           scoringGuideId,
@@ -1596,7 +1606,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'ASSIGNMENT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
-        let assignmentInstructions = '';
+        let assignmentInstructions: string | undefined;
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1608,7 +1618,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
           if (!assignmentInstructions) {
-            assignmentInstructions = taskUnit.instructions || taskUnit.taskPrompt || taskUnit.taskTitle || '';
+            assignmentInstructions = taskUnit.instructions || taskUnit.taskPrompt || taskUnit.taskTitle || taskUnit.expectedDeliverable;
           }
 
           if (taskUnit.rubricDraft && !rubricId) {
@@ -1650,7 +1660,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'ASSIGNMENT',
           title: 'Instrumen Penugasan (Draf AI)',
-          instructions: assignmentInstructions,
+          instructions: assignmentInstructions!,
           rubricId,
           scoringGuideId,
         });
@@ -1660,7 +1670,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'PROJECT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
-        let projectBrief = '';
+        let projectBrief: string | undefined;
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1672,7 +1682,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
           if (!projectBrief) {
-            projectBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
+            projectBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || taskUnit.expectedDeliverable;
           }
 
           if (taskUnit.rubricDraft && !rubricId) {
@@ -1714,7 +1724,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PROJECT',
           title: 'Instrumen Penilaian Proyek (Draf AI)',
-          projectBrief: projectBrief,
+          projectBrief: projectBrief!,
           rubricId,
           scoringGuideId,
         });
@@ -1724,7 +1734,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'PRODUCT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
-        let productBrief = '';
+        let productBrief: string | undefined;
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1736,7 +1746,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
           if (!productBrief) {
-            productBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
+            productBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || taskUnit.expectedDeliverable;
           }
 
           if (taskUnit.rubricDraft && !rubricId) {
@@ -1778,7 +1788,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PRODUCT',
           title: 'Instrumen Penilaian Produk (Draf AI)',
-          productBrief: productBrief,
+          productBrief: productBrief!,
           rubricId,
           scoringGuideId,
         });

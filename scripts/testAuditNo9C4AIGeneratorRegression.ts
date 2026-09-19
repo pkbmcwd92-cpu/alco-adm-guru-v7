@@ -344,7 +344,8 @@ async function runRegressionSuite() {
   assert(contract.units.length === validPlan.coverageUnits.length, 'Case 17: Contract units match coverage units 1:1');
   assert(contract.units[0].objectiveText.includes('pecahan senilai'), 'Case 18: Objective text populated from canonical TP');
   assert(contract.units[0].criterionText!.includes('mengidentifikasi'), 'Case 19: Criterion text populated from canonical KKTP');
-  assert(contract.units[0].indicatorSource === 'AI_DRAFT', 'Case 20: Indicator source marked AI_DRAFT when teacher indicator absent');
+  assert(contract.units[0].assessmentIndicator === undefined, 'Case 20: Indicator is undefined when teacher indicator absent');
+  assert(contract.units[0].indicatorSource === undefined, 'Case 20: Indicator source is undefined when teacher indicator absent');
 
   const { systemPrompt, userPrompt } = buildGenerationPrompts(contract, {
     instructions: 'Sertakan benda konkret',
@@ -926,12 +927,453 @@ async function runRegressionSuite() {
 
   // Case BS & BT: Provenance tracking for indicators and materials
   assert(contractBB.units[0].indicatorSource === 'TEACHER', 'Case BS: Teacher indicator source tracked');
-  assert(contract.units[0].indicatorSource === 'AI_DRAFT', 'Case BS: AI draft indicator source tracked');
-  assert(contract.units[0].materialSource === 'AI_SYNTHETIC', 'Case BT: Material source tracked as AI_SYNTHETIC when empty');
+  assert(contract.units[0].indicatorSource === undefined, 'Case BS: Indicator source is undefined when indicator absent before AI generation');
+  assert(contract.units[0].materialSource === undefined, 'Case BT: Material source is undefined when material absent before AI generation');
 
   // Case BU: Package metadata provenance
   assert(pkg.provenance?.generatedBy === 'AI', 'Case BU: Package generatedBy provenance is strictly AI');
   assert(pkg.provenance?.generatedAt !== undefined, 'Case BU: Package generatedAt timestamp exists');
+
+  // ----------------------------------------------------
+  // SECTION 5: FINAL HARDENING PATCH CASES (BV - CN)
+  // ----------------------------------------------------
+  console.log('\n--- SECTION 5: FINAL HARDENING PATCH CASES (BV - CN) ---');
+
+  // Case BV: Missing indicator has no provenance before AI generation
+  assert(contract.units[0].assessmentIndicator === undefined, 'Case BV: Missing indicator is undefined');
+  assert(contract.units[0].indicatorSource === undefined, 'Case BV: Missing indicator source is undefined');
+
+  // Case BW: Missing material has no provenance before AI generation
+  assert(contract.units[0].materialOrContext === undefined, 'Case BW: Missing material is undefined');
+  assert(contract.units[0].materialSource === undefined, 'Case BW: Missing material source is undefined');
+
+  const teacherContext = { instructions: 'Sertakan contoh benda konkret' };
+
+  // Case BX: AI indicator gets provenance only after generation
+  const mockAIProviderWithIndicator: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: unit0.coverageUnitId,
+          objectiveRefId: unit0.objectiveRefId,
+          criterionId: unit0.criterionId,
+          allocationUnit: unit0.allocationUnit,
+          instrumentType: unit0.instrumentType,
+          itemType: 'MULTIPLE_CHOICE',
+          prompt: 'Berapakah 1/2 + 1/4?',
+          options: [
+            { id: 'opt-1', text: '3/4', isCorrect: true },
+            { id: 'opt-2', text: '1/4', isCorrect: false },
+          ],
+          assessmentIndicator: 'Indikator Draf AI Hasil Generasi',
+        },
+      ]),
+    }),
+  };
+
+  const genWithIndicatorResult = await generateAssessmentPackageDraft({
+    generationPlan: validPlan,
+    provider: mockAIProviderWithIndicator,
+  });
+
+  const generatedUnitWithIndicator = genWithIndicatorResult.generatedUnits[0];
+  assert(generatedUnitWithIndicator?.assessmentIndicator === 'Indikator Draf AI Hasil Generasi', 'Case BX: AI indicator populated');
+  assert(generatedUnitWithIndicator?.indicatorSource === 'AI_DRAFT', 'Case BX: AI indicator source set to AI_DRAFT after generation');
+
+  // Case BY: AI material gets provenance only after generation
+  const mockAIProviderWithMaterial: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: unit0.coverageUnitId,
+          objectiveRefId: unit0.objectiveRefId,
+          criterionId: unit0.criterionId,
+          allocationUnit: unit0.allocationUnit,
+          instrumentType: unit0.instrumentType,
+          itemType: 'MULTIPLE_CHOICE',
+          prompt: 'Berapakah 1/2 + 1/4?',
+          options: [
+            { id: 'opt-1', text: '3/4', isCorrect: true },
+            { id: 'opt-2', text: '1/4', isCorrect: false },
+          ],
+          materialOrContext: 'Materi Sintesis AI Tentang Pecahan',
+        },
+      ]),
+    }),
+  };
+
+  const genWithMaterialResult = await generateAssessmentPackageDraft({
+    generationPlan: validPlan,
+    provider: mockAIProviderWithMaterial,
+  });
+
+  const generatedUnitWithMaterial = genWithMaterialResult.generatedUnits[0];
+  assert(generatedUnitWithMaterial?.materialOrContext === 'Materi Sintesis AI Tentang Pecahan', 'Case BY: AI material populated');
+  assert(generatedUnitWithMaterial?.materialSource === 'AI_SYNTHETIC', 'Case BY: AI material source set to AI_SYNTHETIC after generation');
+
+  // Case BZ: Upstream indicator cannot be overwritten by AI
+  const contractWithTeacherIndicator = buildGenerationContract(
+    {
+      ...validPlan,
+      coverageUnits: [
+        {
+          ...validPlan.coverageUnits[0],
+          assessmentIndicator: 'Indikator Upstream Guru',
+        },
+      ],
+    },
+    teacherContext
+  );
+
+  const parsedOverwriteIndicatorResult = parseAndValidateRawAIResponse(
+    JSON.stringify([
+      {
+        coverageUnitId: unit0.coverageUnitId,
+        objectiveRefId: unit0.objectiveRefId,
+        criterionId: unit0.criterionId,
+        allocationUnit: unit0.allocationUnit,
+        instrumentType: unit0.instrumentType,
+        itemType: 'MULTIPLE_CHOICE',
+        prompt: 'Soal?',
+        options: [
+          { id: 'o1', text: 'A', isCorrect: true },
+          { id: 'o2', text: 'B', isCorrect: false },
+        ],
+        assessmentIndicator: 'Indikator AI Mencoba Mengubah',
+      },
+    ]),
+    contractWithTeacherIndicator
+  );
+
+  assert(
+    parsedOverwriteIndicatorResult.validatedUnits[0]?.assessmentIndicator === 'Indikator Upstream Guru',
+    'Case BZ: Upstream indicator preserved and NOT overwritten by AI'
+  );
+  assert(
+    parsedOverwriteIndicatorResult.validatedUnits[0]?.indicatorSource === 'TEACHER',
+    'Case BZ: Upstream indicator source TEACHER preserved'
+  );
+
+  // Case CA: Upstream material cannot be overwritten by AI
+  const contractWithTeacherMaterial = buildGenerationContract(
+    {
+      ...validPlan,
+      coverageUnits: [
+        {
+          ...validPlan.coverageUnits[0],
+          materialOrContext: 'Materi Upstream Guru',
+        },
+      ],
+    },
+    teacherContext
+  );
+
+  const parsedOverwriteMaterialResult = parseAndValidateRawAIResponse(
+    JSON.stringify([
+      {
+        coverageUnitId: unit0.coverageUnitId,
+        objectiveRefId: unit0.objectiveRefId,
+        criterionId: unit0.criterionId,
+        allocationUnit: unit0.allocationUnit,
+        instrumentType: unit0.instrumentType,
+        itemType: 'MULTIPLE_CHOICE',
+        prompt: 'Soal?',
+        options: [
+          { id: 'o1', text: 'A', isCorrect: true },
+          { id: 'o2', text: 'B', isCorrect: false },
+        ],
+        materialOrContext: 'Materi AI Mencoba Mengubah',
+      },
+    ]),
+    contractWithTeacherMaterial
+  );
+
+  assert(
+    parsedOverwriteMaterialResult.validatedUnits[0]?.materialOrContext === 'Materi Upstream Guru',
+    'Case CA: Upstream material preserved and NOT overwritten by AI'
+  );
+  assert(
+    parsedOverwriteMaterialResult.validatedUnits[0]?.materialSource === 'TEACHER',
+    'Case CA: Upstream material source TEACHER preserved'
+  );
+
+  // Case CB: Empty TASK rejected with EMPTY_TASK_CONTENT
+  const perfUnit0 = perfContract.units[0];
+  const parsedEmptyTaskResult = parseAndValidateRawAIResponse(
+    JSON.stringify([
+      {
+        coverageUnitId: perfUnit0.coverageUnitId,
+        objectiveRefId: perfUnit0.objectiveRefId,
+        criterionId: perfUnit0.criterionId,
+        allocationUnit: 'TASK',
+        instrumentType: 'PERFORMANCE',
+        taskTitle: '',
+        taskPrompt: '',
+        instructions: '',
+        expectedDeliverable: '',
+      },
+    ]),
+    perfContract
+  );
+
+  assert(parsedEmptyTaskResult.validatedUnits.length === 0, 'Case CB: Empty task unit rejected');
+  assert(
+    parsedEmptyTaskResult.issues.some((i) => i.code === 'EMPTY_TASK_PROMPT'),
+    'Case CB: Issue code EMPTY_TASK_PROMPT recorded'
+  );
+
+  // Case CC: Whitespace-only TASK rejected with EMPTY_TASK_CONTENT
+  const parsedWhitespaceTaskResult = parseAndValidateRawAIResponse(
+    JSON.stringify([
+      {
+        coverageUnitId: perfUnit0.coverageUnitId,
+        objectiveRefId: perfUnit0.objectiveRefId,
+        criterionId: perfUnit0.criterionId,
+        allocationUnit: 'TASK',
+        instrumentType: 'PERFORMANCE',
+        taskTitle: '   ',
+        taskPrompt: '  \n\t ',
+        instructions: '   ',
+      },
+    ]),
+    perfContract
+  );
+
+  assert(parsedWhitespaceTaskResult.validatedUnits.length === 0, 'Case CC: Whitespace task unit rejected');
+  assert(
+    parsedWhitespaceTaskResult.issues.some((i) => i.code === 'EMPTY_TASK_PROMPT'),
+    'Case CC: Issue code EMPTY_TASK_PROMPT recorded'
+  );
+
+  // Case CD: PROJECT never maps empty projectBrief
+  const mockPlanProjSec5: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-proj-sec5',
+    instruments: [{ id: 'inst-proj-sec5', type: 'PROJECT', label: 'Penilaian Proyek' }],
+  };
+  const specProjSec5 = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanProjSec5,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planProject = resolveAssessmentGenerationPlan({ generationSpec: specProjSec5 });
+  const projContractSec5 = buildGenerationContract(planProject, teacherContext);
+
+  const projectProvider: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: projContractSec5.units[0].coverageUnitId,
+          objectiveRefId: projContractSec5.units[0].objectiveRefId,
+          criterionId: projContractSec5.units[0].criterionId,
+          allocationUnit: 'TASK',
+          instrumentType: 'PROJECT',
+          taskPrompt: 'Rancanglah mini proyek pengolahan sampah organik.',
+        },
+      ]),
+    }),
+  };
+
+  const projectResult = await generateAssessmentPackageDraft({
+    generationPlan: planProject,
+    provider: projectProvider,
+  });
+
+  const projectInst = projectResult.generatedPackage?.instruments[0] as any;
+  assert(projectInst?.projectBrief === 'Rancanglah mini proyek pengolahan sampah organik.', 'Case CD: projectBrief is non-empty string');
+  assert(projectInst?.projectBrief !== '', 'Case CD: projectBrief is never empty string');
+
+  // Case CE: PRODUCT never maps empty productBrief
+  const mockPlanProdSec5: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-prod-sec5',
+    instruments: [{ id: 'inst-prod-sec5', type: 'PRODUCT', label: 'Penilaian Produk' }],
+  };
+  const specProductSec5 = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanProdSec5,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planProduct = resolveAssessmentGenerationPlan({ generationSpec: specProductSec5 });
+  const productContractSec5 = buildGenerationContract(planProduct, teacherContext);
+
+  const productProvider: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: productContractSec5.units[0].coverageUnitId,
+          objectiveRefId: productContractSec5.units[0].objectiveRefId,
+          criterionId: productContractSec5.units[0].criterionId,
+          allocationUnit: 'TASK',
+          instrumentType: 'PRODUCT',
+          taskTitle: 'Poster Hemat Energi',
+          instructions: 'Buatlah poster karya ilmiah tentang penghematan listrik.',
+        },
+      ]),
+    }),
+  };
+
+  const productResult = await generateAssessmentPackageDraft({
+    generationPlan: planProduct,
+    provider: productProvider,
+  });
+
+  const productInst = productResult.generatedPackage?.instruments[0] as any;
+  assert(productInst?.productBrief.includes('Buatlah poster'), 'Case CE: productBrief is non-empty string');
+  assert(productInst?.productBrief !== '', 'Case CE: productBrief is never empty string');
+
+  // Case CF: PERFORMANCE never maps empty task
+  const perfFallbackProvider: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: perfContract.units[0].coverageUnitId,
+          objectiveRefId: perfContract.units[0].objectiveRefId,
+          criterionId: perfContract.units[0].criterionId,
+          allocationUnit: 'TASK',
+          instrumentType: 'PERFORMANCE',
+          taskPrompt: 'Demonstrasikan cara mengukur panjang meja menggunakan penggaris secara tepat.',
+        },
+      ]),
+    }),
+  };
+
+  const perfCaseCFResult = await generateAssessmentPackageDraft({
+    generationPlan: planPerf,
+    provider: perfFallbackProvider,
+  });
+
+  const perfInstItem = perfCaseCFResult.generatedPackage?.instruments[0] as any;
+  assert(perfInstItem?.task === 'Demonstrasikan cara mengukur panjang meja menggunakan penggaris secara tepat.', 'Case CF: Performance task is non-empty string');
+  assert(perfInstItem?.task !== '', 'Case CF: Performance task is never empty string');
+
+  // Case CG: ASSIGNMENT does not use empty semantic fallback
+  const assignResult = await generateAssessmentPackageDraft({
+    generationPlan: planAssign,
+    provider: taskNoScoringFallbackProvider,
+  });
+
+  const assignInstItem = assignResult.generatedPackage?.instruments[0] as any;
+  assert(assignInstItem?.instructions === 'Penugasan Mandiri', 'Case CG: Assignment instructions non-empty string derived from valid task content');
+  assert(assignInstItem?.instructions !== '', 'Case CG: Assignment instructions is never empty string');
+
+  // Case CH: Portfolio instructions are not forced to empty string when missing
+  const mockPlanPortSec5: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-port-sec5',
+    instruments: [{ id: 'inst-port-sec5', type: 'PORTFOLIO', label: 'Portofolio' }],
+  };
+  const specPortSec5 = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanPortSec5,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planPort = resolveAssessmentGenerationPlan({ generationSpec: specPortSec5 });
+  const portContractSec5 = buildGenerationContract(planPort, teacherContext);
+
+  const portNoInstructionsProvider: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: portContractSec5.units[0].coverageUnitId,
+          objectiveRefId: portContractSec5.units[0].objectiveRefId,
+          criterionId: portContractSec5.units[0].criterionId,
+          allocationUnit: 'EVIDENCE',
+          instrumentType: 'PORTFOLIO',
+          evidenceRequirements: ['Laporan hasil praktikum pecahan'],
+        },
+      ]),
+    }),
+  };
+
+  const portResult = await generateAssessmentPackageDraft({
+    generationPlan: planPort,
+    provider: portNoInstructionsProvider,
+  });
+
+  const portInst = portResult.generatedPackage?.instruments[0] as any;
+  assert(portInst?.instructions === undefined, 'Case CH: Portfolio instructions are undefined when missing (NOT forced to empty string)');
+
+  // Case CI: Empty evidence requirement rejected
+  const portUnit0 = portContractSec5.units[0];
+  const parsedEmptyEvidenceResult = parseAndValidateRawAIResponse(
+    JSON.stringify([
+      {
+        coverageUnitId: portUnit0.coverageUnitId,
+        objectiveRefId: portUnit0.objectiveRefId,
+        criterionId: portUnit0.criterionId,
+        allocationUnit: 'EVIDENCE',
+        instrumentType: 'PORTFOLIO',
+        evidenceRequirements: ['  ', ''],
+      },
+    ]),
+    portContractSec5
+  );
+
+  assert(parsedEmptyEvidenceResult.validatedUnits.length === 0, 'Case CI: Empty evidence requirements unit rejected');
+  assert(
+    parsedEmptyEvidenceResult.issues.some((i) => i.code === 'EMPTY_EVIDENCE_REQUIREMENTS'),
+    'Case CI: Issue code EMPTY_EVIDENCE_REQUIREMENTS recorded'
+  );
+
+  // Case CJ: Observation optional metadata remains undefined when absent
+  const mockPlanObsSec5: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-obs-sec5',
+    instruments: [{ id: 'inst-obs-sec5', type: 'OBSERVATION', label: 'Observasi' }],
+  };
+  const specObsSec5 = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanObsSec5,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planObsSimple = resolveAssessmentGenerationPlan({ generationSpec: specObsSec5 });
+  const obsContractSec5 = buildGenerationContract(planObsSimple, teacherContext);
+
+  const obsSimpleProvider: AssessmentAIGenerationProvider = {
+    generate: async () => ({
+      rawText: JSON.stringify([
+        {
+          coverageUnitId: obsContractSec5.units[0].coverageUnitId,
+          objectiveRefId: obsContractSec5.units[0].objectiveRefId,
+          criterionId: obsContractSec5.units[0].criterionId,
+          allocationUnit: 'OBSERVATION',
+          instrumentType: 'OBSERVATION',
+          aspects: [{ label: 'Keaktifan', indicator: 'Siswa bertanya' }],
+        },
+      ]),
+    }),
+  };
+
+  const obsSimpleResult = await generateAssessmentPackageDraft({
+    generationPlan: planObsSimple,
+    provider: obsSimpleProvider,
+  });
+
+  const obsSimpleInst = obsSimpleResult.generatedPackage?.instruments[0] as any;
+  assert(obsSimpleInst?.instructions === undefined, 'Case CJ: Observation instructions undefined when absent');
+  assert(obsSimpleInst?.recordingScheme === undefined, 'Case CJ: Observation recordingScheme undefined when absent');
+
+  // Case CK: No pre-generation fake provenance across all units in contract
+  const multiUnitContract = buildGenerationContract(validPlan, teacherContext);
+  multiUnitContract.units.forEach((u, i) => {
+    assert(u.indicatorSource === undefined, `Case CK: Unit #${i + 1} indicatorSource undefined before generation`);
+    assert(u.materialSource === undefined, `Case CK: Unit #${i + 1} materialSource undefined before generation`);
+  });
+
+  // Case CL: Existing academicSettingId regression remains correct
+  assert(contract.academicSettingId === 'setting-sd-4', 'Case CL: Canonical academicSettingId preserved');
+
+  // Case CM: Package remains DRAFT
+  assert(pkg.workflowStatus === 'DRAFT', 'Case CM: Package workflowStatus is DRAFT');
+  assert(pkg.needsReview === true, 'Case CM: Package needsReview is true');
+
+  // Case CN: No auto-SIAP
+  assert(pkg.workflowStatus !== 'SIAP', 'Case CN: Package workflowStatus is NEVER auto-SIAP');
 
   // ----------------------------------------------------
   // SUMMARY

@@ -1014,7 +1014,7 @@ export interface PortfolioAssessmentInstrument {
   id: string;
   type: 'PORTFOLIO';
   title?: string;
-  instructions: string;
+  instructions?: string;
   evidenceRequirements: string[];
   blueprintItemId?: string;
   rubricId?: string;
