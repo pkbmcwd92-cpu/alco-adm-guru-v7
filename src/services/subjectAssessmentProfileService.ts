@@ -9,19 +9,10 @@ import {
 import { resolveSubjectInput } from '../data/curriculum/resolver';
 
 const PROV_CP_OFFICIAL: AssessmentGenerationRule = {
-  id: 'PROV-CP-BSKAP-046-2025',
+  id: 'PROV-CP-BSKAP-032-2024',
   sourceType: 'OFFICIAL',
-  description: 'Elemen dan Capaian Pembelajaran mata pelajaran resmi BSKAP No. 046/H/KR/2025 dan BSKAP No. 032/H/KR/2024.',
-  sourceTitle: 'Capaian Pembelajaran pada Pendidikan Anak Usia Dini, Jenjang Pendidikan Dasar, dan Menengah',
-  sourceAgency: 'BSKAP Kemendikbudristek',
-  sourceVersion: '2025',
-};
-
-const PROV_PPA_REFERENCE: AssessmentGenerationRule = {
-  id: 'PROV-PPA-BSKAP-2024',
-  sourceType: 'OFFICIAL_ASSESSMENT_REFERENCE',
-  description: 'Panduan keselarasan bentuk asesmen dengan karakteristik kompetensi mata pelajaran.',
-  sourceTitle: 'Panduan Pembelajaran dan Asesmen (PPA)',
+  description: 'Elemen dan Capaian Pembelajaran mata pelajaran resmi kurikulum.',
+  sourceTitle: 'Keputusan Kepala BSKAP No. 032/H/KR/2024',
   sourceAgency: 'BSKAP Kemendikbudristek',
   sourceVersion: '2024',
 };
@@ -68,7 +59,7 @@ function createPjokProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['PERFORMANCE', 'OBSERVATION'],
       recommendedInstrumentTypes: ['PERFORMANCE', 'OBSERVATION'],
       rationaleCode: 'PJOK_PSYCHOMOTOR_EVIDENCE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'PJOK-KNOWLEDGE-RULES',
@@ -77,7 +68,7 @@ function createPjokProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['KNOWLEDGE_RESPONSE', 'REASONING'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ORAL_TEST'],
       rationaleCode: 'PJOK_COGNITIVE_EVIDENCE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'PJOK-STRATEGY-DECISION',
@@ -95,7 +86,7 @@ function createPjokProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['PERFORMANCE', 'OBSERVATION', 'PORTFOLIO'],
       recommendedInstrumentTypes: ['PERFORMANCE', 'PORTFOLIO', 'SELF_ASSESSMENT'],
       rationaleCode: 'PJOK_HEALTH_HABIT_EVIDENCE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
   ];
 
@@ -106,7 +97,7 @@ function createPjokProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PPA_REFERENCE],
+    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -146,7 +137,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['KNOWLEDGE_RESPONSE', 'REASONING'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ASSIGNMENT'],
       rationaleCode: 'BINDO_READING_COMPREHENSION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'BINDO-MENULIS',
@@ -155,7 +146,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['PRODUCT', 'PERFORMANCE'],
       recommendedInstrumentTypes: ['PRODUCT', 'ASSIGNMENT', 'WRITTEN_TEST'],
       rationaleCode: 'BINDO_WRITING_PRODUCT',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'BINDO-BERBICARA-MEMPRESENTASIKAN',
@@ -164,7 +155,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['ORAL_RESPONSE', 'PERFORMANCE'],
       recommendedInstrumentTypes: ['ORAL_TEST', 'PERFORMANCE'],
       rationaleCode: 'BINDO_ORAL_COMMUNICATION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'BINDO-MENYIMAK',
@@ -173,7 +164,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['ORAL_RESPONSE', 'KNOWLEDGE_RESPONSE'],
       recommendedInstrumentTypes: ['ORAL_TEST', 'WRITTEN_TEST', 'OBSERVATION'],
       rationaleCode: 'BINDO_LISTENING_COMPREHENSION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
   ];
 
@@ -184,7 +175,7 @@ function createBahasaIndonesiaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PPA_REFERENCE],
+    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -222,7 +213,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['KNOWLEDGE_RESPONSE', 'REASONING'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ORAL_TEST'],
       rationaleCode: 'MAT_CONCEPTUAL_UNDERSTANDING',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'MAT-PROCEDURAL',
@@ -231,7 +222,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['KNOWLEDGE_RESPONSE', 'PRODUCT'],
       recommendedInstrumentTypes: ['WRITTEN_TEST'],
       rationaleCode: 'MAT_PROCEDURAL_CALCULATION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'MAT-REASONING',
@@ -249,7 +240,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['REASONING', 'PRODUCT'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ASSIGNMENT', 'PROJECT'],
       rationaleCode: 'MAT_PROBLEM_SOLVING',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'MAT-DATA-REPRESENTATION',
@@ -258,7 +249,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['REASONING', 'PRODUCT'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'PROJECT', 'ASSIGNMENT'],
       rationaleCode: 'MAT_DATA_ANALYSIS',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
   ];
 
@@ -269,7 +260,7 @@ function createMatematikaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PPA_REFERENCE],
+    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -313,7 +304,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
       recommendedEvidenceTypes: ['PERFORMANCE', 'OBSERVATION', 'PRODUCT'],
       recommendedInstrumentTypes: ['PERFORMANCE', 'OBSERVATION', 'PROJECT'],
       rationaleCode: 'SCIENCE_INQUIRY_PRACTICE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'SCIENCE-CAUSAL-PREDICTION',
@@ -322,7 +313,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
       recommendedEvidenceTypes: ['REASONING', 'KNOWLEDGE_RESPONSE'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ORAL_TEST'],
       rationaleCode: 'SCIENCE_CAUSAL_REASONING',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'SCIENCE-DATA-INTERPRETATION',
@@ -331,7 +322,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
       recommendedEvidenceTypes: ['REASONING', 'PRODUCT'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ASSIGNMENT'],
       rationaleCode: 'SCIENCE_DATA_INTERPRETATION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'SCIENCE-PHENOMENON-OBSERVATION',
@@ -340,7 +331,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
       recommendedEvidenceTypes: ['OBSERVATION', 'REASONING'],
       recommendedInstrumentTypes: ['OBSERVATION', 'PERFORMANCE', 'WRITTEN_TEST'],
       rationaleCode: 'SCIENCE_OBSERVATIONAL_EVIDENCE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
   ];
 
@@ -351,7 +342,7 @@ function createIpaIpasProfile(subjectKey: 'IPAS' | 'IPA'): SubjectAssessmentProf
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PPA_REFERENCE],
+    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }
@@ -393,7 +384,7 @@ function createPendidikanPancasilaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['KNOWLEDGE_RESPONSE', 'REASONING'],
       recommendedInstrumentTypes: ['WRITTEN_TEST', 'ORAL_TEST'],
       rationaleCode: 'PANCASILA_CIVIC_KNOWLEDGE',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
     {
       id: 'PANCASILA-REAL-LIFE-CASE',
@@ -420,7 +411,7 @@ function createPendidikanPancasilaProfile(): SubjectAssessmentProfile {
       recommendedEvidenceTypes: ['PERFORMANCE', 'OBSERVATION'],
       recommendedInstrumentTypes: ['OBSERVATION', 'PEER_ASSESSMENT', 'PERFORMANCE'],
       rationaleCode: 'PANCASILA_COLLABORATIVE_ACTION',
-      provenance: PROV_PPA_REFERENCE,
+      provenance: PROV_PEDAGOGICAL,
     },
   ];
 
@@ -431,7 +422,7 @@ function createPendidikanPancasilaProfile(): SubjectAssessmentProfile {
     supportedEvidenceTypes,
     supportedInstrumentTypes,
     recommendationRules,
-    provenance: [PROV_CP_OFFICIAL, PROV_PPA_REFERENCE],
+    provenance: [PROV_CP_OFFICIAL, PROV_PEDAGOGICAL],
     profileStatus: 'SPECIFIC',
   };
 }

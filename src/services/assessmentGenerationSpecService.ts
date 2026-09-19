@@ -2,16 +2,19 @@ import {
   AcademicSetting,
   AssessmentCriterion,
   AssessmentGenerationIssue,
+  AssessmentGenerationProfile,
   AssessmentGenerationResolutionStatus,
   AssessmentGenerationSpec,
   AssessmentInstrumentType,
   AssessmentPlan,
   AssessmentSourceContext,
   K13Analysis,
+  K13AnalysisItem,
   ResolvedAssessmentCriterion,
   ResolvedAssessmentCurriculumContext,
   ResolvedAssessmentObjective,
   TPData,
+  TPItem,
 } from '../types';
 import {
   createAssessmentGenerationProfile,
@@ -28,6 +31,47 @@ export interface ResolveAssessmentGenerationSpecParams {
   k13Analysis?: K13Analysis | null;
   assessmentCriteria?: AssessmentCriterion[] | null;
   activeAssessmentPackageId?: string;
+  canonicalSourceContext?: AssessmentSourceContext[];
+}
+
+/**
+ * Resolusi canonical text untuk Tujuan Pembelajaran (Kurikulum Merdeka).
+ * Berdasarkan kontrak TP kanonikal: statement > description > competence + contentScope > competence.
+ * Tidak menebak atau memalsukan teks dari subjek atau ID jika kosong.
+ */
+export function resolveCanonicalTPText(item: TPItem): string {
+  if (item.statement && item.statement.trim() !== '') return item.statement.trim();
+  if (item.description && item.description.trim() !== '') return item.description.trim();
+  if (item.competence && item.contentScope) {
+    const combined = `${item.competence} ${item.contentScope}`.trim();
+    if (combined !== '') return combined;
+  }
+  if (item.competence && item.competence.trim() !== '') return item.competence.trim();
+
+  // Legacy field fallback terisolasi dan terurut (misal mock / integrasi lama)
+  const legacy = item as unknown as Record<string, unknown>;
+  if (typeof legacy.tp === 'string' && legacy.tp.trim() !== '') return legacy.tp.trim();
+  if (typeof legacy.text === 'string' && legacy.text.trim() !== '') return legacy.text.trim();
+
+  return '';
+}
+
+/**
+ * Resolusi canonical text untuk Kompetensi Dasar K13.
+ * Berdasarkan kontrak analisis KD K13: tujuanPembelajaran > kd > indikator.
+ * Tidak menebak atau memalsukan teks dari subjek atau ID jika kosong.
+ */
+export function resolveCanonicalKDText(item: K13AnalysisItem): string {
+  if (item.tujuanPembelajaran && item.tujuanPembelajaran.trim() !== '') return item.tujuanPembelajaran.trim();
+  if (item.kd && item.kd.trim() !== '') return item.kd.trim();
+  if (item.indikator && item.indikator.trim() !== '') return item.indikator.trim();
+
+  // Legacy field fallback terisolasi dan terurut (misal mock / integrasi lama)
+  const legacy = item as unknown as Record<string, unknown>;
+  if (typeof legacy.kdText === 'string' && legacy.kdText.trim() !== '') return legacy.kdText.trim();
+  if (typeof legacy.text === 'string' && legacy.text.trim() !== '') return legacy.text.trim();
+
+  return '';
 }
 
 /**
@@ -176,10 +220,20 @@ export function resolveAssessmentGenerationSpec(
             return c && c.tpId === targetId;
           });
 
+          const text = resolveCanonicalTPText(found);
+          if (!text || text.trim() === '') {
+            issues.push({
+              code: 'OBJECTIVE_TEXT_EMPTY',
+              severity: 'BLOCKING',
+              message: `Tujuan pembelajaran kanonikal dengan ID "${targetId}" memiliki teks kosong.`,
+              objectiveRefId: targetId,
+            });
+          }
+
           resolvedObjectives.push({
             id: found.id,
             sourceType: 'TP',
-            text: found.statement || found.description || (found as any).tp || (found as any).text || '',
+            text,
             criterionIds: matchingCriteriaIds,
           });
         }
@@ -203,10 +257,20 @@ export function resolveAssessmentGenerationSpec(
             objectiveRefId: targetId,
           });
         } else {
+          const text = resolveCanonicalKDText(found);
+          if (!text || text.trim() === '') {
+            issues.push({
+              code: 'OBJECTIVE_TEXT_EMPTY',
+              severity: 'BLOCKING',
+              message: `Kompetensi Dasar (KD) kanonikal dengan ID "${targetId}" memiliki teks kosong.`,
+              objectiveRefId: targetId,
+            });
+          }
+
           resolvedObjectives.push({
             id: found.id,
             sourceType: 'KD',
-            text: found.tujuanPembelajaran || found.kd || found.indikator || (found as any).kdText || (found as any).text || '',
+            text,
             criterionIds: [],
           });
         }
@@ -258,9 +322,11 @@ export function resolveAssessmentGenerationSpec(
     }
   }
 
-  // 9. Pembuatan Profil Generasi & Profil Kalibrasi Jenjang
-  const safeGrade = resolvedGradeNumber || 1;
-  const generationProfile = createAssessmentGenerationProfile(safeGrade);
+  // 9. Pembuatan Profil Generasi & Profil Kalibrasi Jenjang (hanya jika grade terdefinisi secara kanonikal)
+  let generationProfile: AssessmentGenerationProfile | undefined = undefined;
+  if (resolvedGradeNumber !== undefined) {
+    generationProfile = createAssessmentGenerationProfile(resolvedGradeNumber);
+  }
 
   // 10. Pemetaan Rekomendasi Bukti (Evidence Mapping) & Pengecekan Keselarasan Instrumen
   const evidenceRecommendations = resolvedObjectives.map((obj) => {
@@ -277,11 +343,13 @@ export function resolveAssessmentGenerationSpec(
 
     // Pengecekan koherensi dengan AssessmentPlan kanonikal:
     // CANONICAL PLAN MUST WIN! Rekomendasi tidak boleh merubah plannedInstrumentTypes di plan.
-    const isCoherent = rec.recommendedInstrumentTypes.some((recInst) =>
+    // Jika rekomendasi kosong karena ambigu, JANGAN membuat mismatch palsu (hanya EVIDENCE_RECOMMENDATION_AMBIGUOUS).
+    const hasRecommendations = rec.recommendedInstrumentTypes.length > 0;
+    const isCoherent = hasRecommendations && rec.recommendedInstrumentTypes.some((recInst) =>
       plannedInstrumentTypes.includes(recInst)
     );
 
-    if (!isCoherent && plannedInstrumentTypes.length > 0) {
+    if (hasRecommendations && !isCoherent && plannedInstrumentTypes.length > 0) {
       issues.push({
         code: 'INSTRUMENT_RECOMMENDATION_MISMATCH',
         severity: 'REVIEW',
@@ -302,22 +370,12 @@ export function resolveAssessmentGenerationSpec(
     return rec;
   });
 
-  // 11. Konteks Sumber (Source Context)
-  const sourceContext: AssessmentSourceContext[] = [
-    {
-      id: 'SRC-CURRICULUM',
-      sourceType: 'CANONICAL_CURRICULUM',
-      title: rawCurriculumType === 'KURIKULUM_MERDEKA'
-        ? 'Kurikulum Merdeka (Kemendikbudristek No. 12 Tahun 2024)'
-        : 'Kurikulum 2013 (Permendikbud No. 37 Tahun 2018)',
-    },
-    {
-      id: 'SRC-PPA',
-      sourceType: 'OFFICIAL_GUIDANCE',
-      title: 'Panduan Pembelajaran dan Asesmen (PPA) BSKAP 2024',
-      sourceRef: 'BSKAP-PPA-2024',
-    },
-  ];
+  // 11. Konteks Sumber (Source Context) - Hanya sumber nyata/kanonikal guru
+  const sourceContext: AssessmentSourceContext[] = [];
+
+  if (params.canonicalSourceContext && Array.isArray(params.canonicalSourceContext)) {
+    sourceContext.push(...params.canonicalSourceContext);
+  }
 
   if (assessmentPlan) {
     sourceContext.push({
@@ -339,12 +397,23 @@ export function resolveAssessmentGenerationSpec(
     status = 'NEEDS_REVIEW';
   }
 
+  const rawLevel = academicSetting?.level;
+  let resolvedSchoolLevel: 'SD' | 'SMP' | 'SMA' | undefined = undefined;
+  if (rawLevel === 'SD' || rawLevel === 'SMP' || rawLevel === 'SMA') {
+    resolvedSchoolLevel = rawLevel;
+  }
+
+  let resolvedCurriculumType: 'KURIKULUM_MERDEKA' | 'K13' | undefined = undefined;
+  if (rawCurriculumType === 'KURIKULUM_MERDEKA' || rawCurriculumType === 'K13') {
+    resolvedCurriculumType = rawCurriculumType;
+  }
+
   const curriculumContext: ResolvedAssessmentCurriculumContext = {
-    curriculumType: rawCurriculumType === 'K13' ? 'K13' : 'KURIKULUM_MERDEKA',
+    curriculumType: resolvedCurriculumType,
     rawCurriculumName: academicSetting?.curriculum || '',
-    grade: safeGrade,
-    schoolLevel: academicSetting?.level === 'SMP' ? 'SMP' : academicSetting?.level === 'SMA' ? 'SMA' : 'SD',
-    phase: resolvePhaseForGrade(safeGrade),
+    grade: resolvedGradeNumber,
+    schoolLevel: resolvedSchoolLevel,
+    phase: resolvedGradeNumber !== undefined ? resolvePhaseForGrade(resolvedGradeNumber) : undefined,
   };
 
   return {

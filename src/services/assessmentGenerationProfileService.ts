@@ -7,35 +7,52 @@ import {
 } from '../types';
 import { getPhaseForGrade } from '../data/curriculum/resolver';
 
+function parseGradeString(str: string): number | undefined {
+  const trimmed = str.trim();
+  if (!trimmed) return undefined;
+
+  // Tolak format rentang atau karakter pembagi yang ambigu (misal: "4-5", "4/5", "10A-11A")
+  if (/[-/,_]/.test(trimmed)) {
+    return undefined;
+  }
+
+  // Pola eksplisit: opsional prefix kata (kelas|kls|grade|tingkat), lalu angka integer 1..12 secara eksak
+  const match = trimmed.match(/^(?:(?:kelas|kls|grade|tingkat)\s+)?([1-9]|1[0-2])$/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    if (!isNaN(num) && num >= 1 && num <= 12) {
+      return num;
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Resolusi nilai kelas (grade) secara aman dan deterministik.
  * Nilai wajib berupa bilangan bulat 1 s.d. 12.
- * Jika tidak valid, mengembalikan undefined (FAIL-CLOSED, tanpa fallback tebakan).
+ * Jika tidak valid atau ambigu, mengembalikan undefined (FAIL-CLOSED, tanpa fallback tebakan).
  */
 export function resolveGrade(
   setting?: AcademicSetting | null,
   inputGrade?: number | string
 ): number | undefined {
-  let candidate: number | undefined;
-
-  if (typeof inputGrade === 'number' && Number.isFinite(inputGrade)) {
-    candidate = Math.floor(inputGrade);
-  } else if (typeof inputGrade === 'string' && inputGrade.trim() !== '') {
-    const matched = inputGrade.replace(/[^0-9]/g, '');
-    if (matched) {
-      const parsed = parseInt(matched, 10);
-      if (!isNaN(parsed)) candidate = parsed;
+  if (inputGrade !== undefined && inputGrade !== null) {
+    if (typeof inputGrade === 'number' && Number.isInteger(inputGrade) && inputGrade >= 1 && inputGrade <= 12) {
+      return inputGrade;
     }
-  } else if (setting && typeof setting.grade === 'string' && setting.grade.trim() !== '') {
-    const matched = setting.grade.replace(/[^0-9]/g, '');
-    if (matched) {
-      const parsed = parseInt(matched, 10);
-      if (!isNaN(parsed)) candidate = parsed;
+    if (typeof inputGrade === 'string') {
+      return parseGradeString(inputGrade);
     }
+    return undefined;
   }
 
-  if (candidate !== undefined && candidate >= 1 && candidate <= 12) {
-    return candidate;
+  if (setting && typeof setting.grade === 'number' && Number.isInteger(setting.grade) && setting.grade >= 1 && setting.grade <= 12) {
+    return setting.grade;
+  }
+
+  if (setting && typeof setting.grade === 'string') {
+    return parseGradeString(setting.grade);
   }
 
   return undefined;
@@ -83,11 +100,9 @@ export function getGradeCalibrationProfile(grade: number): AssessmentGradeCalibr
   const rules: AssessmentGenerationRule[] = [
     {
       id: `RULE-GRADE-CALIB-${grade}`,
-      sourceType: 'OFFICIAL_ASSESSMENT_REFERENCE',
-      description: `Kalibrasi kompleksitas instruksi dan stimulus asesmen untuk kelas ${grade} berdasarkan tahap perkembangan kognitif peserta didik.`,
-      sourceTitle: 'Panduan Pembelajaran dan Asesmen (PPA) BSKAP Kemendikbudristek',
-      sourceAgency: 'BSKAP',
-      sourceVersion: '2024',
+      sourceType: 'PEDAGOGICAL_RULE',
+      description: `Kalibrasi kompleksitas instruksi dan stimulus asesmen untuk kelas ${grade} berdasarkan kaidah perkembangan kognitif dan beban bacaan peserta didik.`,
+      sourceTitle: 'Kaidah Pedagogis Kompleksitas Instruksi dan Beban Bacaan Peserta Didik',
     },
   ];
 
@@ -158,7 +173,7 @@ export function createAssessmentGenerationProfile(grade: number): AssessmentGene
       id: 'PROV-PHASE-OFFICIAL',
       sourceType: 'OFFICIAL',
       description: 'Penetapan Fase Capaian Pembelajaran Kurikulum Merdeka berdasarkan jenjang kelas.',
-      sourceTitle: 'Keputusan Kepala BSKAP No. 032/H/KR/2024 & Permendikbudristek No. 12 Tahun 2024',
+      sourceTitle: 'Keputusan Kepala BSKAP No. 032/H/KR/2024',
       sourceAgency: 'Kemendikbudristek',
       sourceVersion: '2024',
     },

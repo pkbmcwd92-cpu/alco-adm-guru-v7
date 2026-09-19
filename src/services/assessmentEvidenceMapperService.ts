@@ -81,20 +81,12 @@ export function mapObjectiveToEvidence(params: MapEvidenceParams): AssessmentEvi
   }
 
   // Jika tidak ada rule yang cocok atau kompetensi ambigu:
-  // Jangan tebak secara deterministik. Laporkan NEEDS_TEACHER_REVIEW dengan safe fallback.
-  const fallbackEvidence: AssessmentEvidenceType[] = subjectProfile.supportedEvidenceTypes.length > 0
-    ? [subjectProfile.supportedEvidenceTypes[0]]
-    : ['KNOWLEDGE_RESPONSE'];
-
-  const fallbackInstruments: AssessmentInstrumentType[] = subjectProfile.supportedInstrumentTypes.length > 0
-    ? [subjectProfile.supportedInstrumentTypes[0]]
-    : ['WRITTEN_TEST'];
-
+  // Dilarang memilih indeks pertama atau fallback written test / knowledge response secara deterministik.
   return {
     objectiveRefId: objective.id,
     criterionId: criterion?.id,
-    evidenceTypes: fallbackEvidence,
-    recommendedInstrumentTypes: fallbackInstruments,
+    evidenceTypes: [],
+    recommendedInstrumentTypes: [],
     rationaleCode: 'COMPETENCY_AMBIGUOUS',
     provenance: subjectProfile.provenance,
     confidence: 'NEEDS_TEACHER_REVIEW',

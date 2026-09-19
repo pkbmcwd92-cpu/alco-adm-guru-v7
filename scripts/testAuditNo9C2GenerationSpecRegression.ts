@@ -743,6 +743,314 @@ async function runRegressionSuite() {
     'Case AK: Canonical AssessmentPlan is completely immutable during generation spec resolution'
   );
 
+  // ==========================================
+  // HARDENING 9C.2 REGRESSION CASES: AL s/d BL
+  // ==========================================
+
+  // Case AL: Grade unresolved tidak menghasilkan grade = 1
+  const specAL = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: { ...mockAcademicSettingSD4, grade: 'unresolved-grade' },
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    specAL.curriculumContext.grade === undefined,
+    'Case AL: Grade unresolved does NOT fabricate grade = 1 (remains undefined)',
+    `grade=${specAL.curriculumContext.grade}`
+  );
+
+  // Case AM: Curriculum unresolved tidak menghasilkan KURIKULUM_MERDEKA
+  const specAM = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: { ...mockAcademicSettingSD4, curriculum: '', curriculumType: undefined },
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    specAM.curriculumContext.curriculumType === undefined,
+    'Case AM: Curriculum unresolved does NOT fabricate KURIKULUM_MERDEKA (remains undefined)',
+    `curriculumType=${specAM.curriculumContext.curriculumType}`
+  );
+
+  // Case AN: School level unresolved tidak menghasilkan SD
+  const specAN = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: { ...mockAcademicSettingSD4, level: undefined },
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    specAN.curriculumContext.schoolLevel === undefined,
+    'Case AN: School level unresolved does NOT fabricate SD (remains undefined)',
+    `schoolLevel=${specAN.curriculumContext.schoolLevel}`
+  );
+
+  // Case AO: GenerationProfile tidak fabricated ketika grade unresolved
+  assert(
+    specAL.generationProfile === undefined,
+    'Case AO: GenerationProfile is NOT fabricated when grade is unresolved (undefined)'
+  );
+
+  // Case AP: Phase tidak fabricated ketika grade unresolved
+  assert(
+    specAL.curriculumContext.phase === undefined,
+    'Case AP: Phase is NOT fabricated when grade is unresolved (undefined)'
+  );
+
+  // Setup unmatch / ambiguous objective test
+  const unmatchObj = {
+    id: 'obj-unmatch-1',
+    sourceType: 'TP' as const,
+    text: 'Xyz123 kompetensi tidak berpola keyword apapun',
+    criterionIds: [],
+  };
+  const profilePjok = resolveSubjectAssessmentProfile('PJOK');
+  const recUnmatch = mapObjectiveToEvidence({
+    objective: unmatchObj,
+    subjectProfile: profilePjok,
+    plannedInstrumentTypes: ['PERFORMANCE'],
+  });
+
+  // Case AQ: Evidence rule tidak match -> evidenceTypes = []
+  assert(
+    Array.isArray(recUnmatch.evidenceTypes) && recUnmatch.evidenceTypes.length === 0,
+    'Case AQ: Evidence rule no-match results in empty evidenceTypes array ([])',
+    `evidenceTypes=${JSON.stringify(recUnmatch.evidenceTypes)}`
+  );
+
+  // Case AR: Evidence rule tidak match -> recommendedInstrumentTypes = []
+  assert(
+    Array.isArray(recUnmatch.recommendedInstrumentTypes) && recUnmatch.recommendedInstrumentTypes.length === 0,
+    'Case AR: Evidence rule no-match results in empty recommendedInstrumentTypes array ([])',
+    `recommendedInstrumentTypes=${JSON.stringify(recUnmatch.recommendedInstrumentTypes)}`
+  );
+
+  // Case AS: Ambiguous evidence tidak default KNOWLEDGE_RESPONSE
+  assert(
+    !recUnmatch.evidenceTypes.includes('KNOWLEDGE_RESPONSE'),
+    'Case AS: Ambiguous evidence does NOT fallback to KNOWLEDGE_RESPONSE'
+  );
+
+  // Case AT: Ambiguous evidence tidak default WRITTEN_TEST
+  assert(
+    !recUnmatch.recommendedInstrumentTypes.includes('WRITTEN_TEST'),
+    'Case AT: Ambiguous evidence does NOT fallback to WRITTEN_TEST'
+  );
+
+  // Generic subject profile test
+  const profileGeneric = resolveSubjectAssessmentProfile('Seni Budaya');
+  const recGenericUnmatch = mapObjectiveToEvidence({
+    objective: unmatchObj,
+    subjectProfile: profileGeneric,
+    plannedInstrumentTypes: ['PORTFOLIO'],
+  });
+
+  // Case AU: Generic profile no-match tidak menggunakan first supported evidence
+  assert(
+    recGenericUnmatch.evidenceTypes.length === 0 &&
+      !recGenericUnmatch.evidenceTypes.includes(profileGeneric.supportedEvidenceTypes[0]),
+    'Case AU: Generic profile no-match does NOT take first supported evidence type'
+  );
+
+  // Case AV: Generic profile no-match tidak menggunakan first supported instrument
+  assert(
+    recGenericUnmatch.recommendedInstrumentTypes.length === 0 &&
+      !recGenericUnmatch.recommendedInstrumentTypes.includes(profileGeneric.supportedInstrumentTypes[0]),
+    'Case AV: Generic profile no-match does NOT take first supported instrument type'
+  );
+
+  // Case AW: Multiple matching rules digabungkan, bukan first-match
+  const multiRuleObj = {
+    id: 'obj-multi-1',
+    sourceType: 'TP' as const,
+    text: 'Mempraktikkan gerak dasar senam lantai dan menjelaskan konsep gerak keseimbangan',
+    criterionIds: [],
+  };
+  const recMulti = mapObjectiveToEvidence({
+    objective: multiRuleObj,
+    subjectProfile: profilePjok,
+    plannedInstrumentTypes: ['PERFORMANCE'],
+  });
+  const hasPsychomotorEvidence = recMulti.evidenceTypes.includes('PERFORMANCE');
+  const hasCognitiveEvidence = recMulti.evidenceTypes.includes('KNOWLEDGE_RESPONSE');
+  assert(
+    hasPsychomotorEvidence && hasCognitiveEvidence,
+    'Case AW: Multiple matching rules are merged rather than short-circuiting on first match',
+    `evidenceTypes=${JSON.stringify(recMulti.evidenceTypes)}, rationale=${recMulti.rationaleCode}`
+  );
+
+  // Case AX: Grade calibration provenance bukan OFFICIAL jika mapping merupakan kaidah pedagogis aplikasi
+  const calib4 = getGradeCalibrationProfile(4);
+  const calibRulesAllPedagogical = calib4.rules.every((r) => r.sourceType === 'PEDAGOGICAL_RULE');
+  assert(
+    calibRulesAllPedagogical,
+    'Case AX: Grade calibration provenance uses PEDAGOGICAL_RULE instead of claiming official decree status'
+  );
+
+  // Case AY: AKM progression tetap OFFICIAL_REFERENCE
+  const akm4 = resolveAKMProgression(4);
+  assert(
+    akm4 !== undefined && akm4.sourceType === 'OFFICIAL_REFERENCE',
+    'Case AY: AKM progression retains OFFICIAL_REFERENCE provenance'
+  );
+
+  // Case AZ: Resolver tidak membuat hardcoded PPA 2024 sourceContext
+  assert(
+    !specA.sourceContext.some((s) => s.id === 'SRC-PPA' || (s.title && s.title.includes('Panduan Pembelajaran dan Asesmen (PPA) BSKAP 2024'))),
+    'Case AZ: Resolver does NOT inject hardcoded PPA 2024 into canonical sourceContext'
+  );
+
+  // Case BA: Resolver tidak membuat hardcoded curriculum regulation sourceContext
+  assert(
+    !specA.sourceContext.some((s) => s.id === 'SRC-CURRICULUM' || (s.title && s.title.includes('No. 12 Tahun 2024'))),
+    'Case BA: Resolver does NOT inject unverified regulation decree numbers into sourceContext'
+  );
+
+  // Case BB: Canonical sourceContext input dipertahankan jika diteruskan
+  const specBB = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+    canonicalSourceContext: [
+      {
+        id: 'SRC-CUSTOM-GURU',
+        sourceType: 'TEACHER_SOURCE',
+        title: 'Bahan Ajar Mandiri Guru',
+      },
+    ],
+  });
+  assert(
+    specBB.sourceContext.some((s) => s.id === 'SRC-CUSTOM-GURU'),
+    'Case BB: Provided canonicalSourceContext items are preserved in the resolved spec'
+  );
+
+  // Case BC: Objective ditemukan tetapi text kosong -> BLOCKED (OBJECTIVE_TEXT_EMPTY)
+  const tpEmptyText: TPData = {
+    id: 'tp-empty',
+    academicSettingId: 'setting-sd-4',
+    items: [
+      {
+        id: 'tp-empty-1',
+        statement: '',
+        description: '',
+        competence: '',
+        contentScope: '',
+      } as any,
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+  const planEmptyObj: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-empty-obj',
+    tpIds: ['tp-empty-1'],
+    criterionIds: [],
+  };
+  const specBC = resolveAssessmentGenerationSpec({
+    assessmentPlan: planEmptyObj,
+    academicSetting: mockAcademicSettingSD4,
+    tp: tpEmptyText,
+  });
+  assert(
+    specBC.resolution.status === 'BLOCKED' &&
+      specBC.resolution.issues.some((i) => i.code === 'OBJECTIVE_TEXT_EMPTY'),
+    'Case BC: Found objective with empty canonical text is BLOCKED with OBJECTIVE_TEXT_EMPTY'
+  );
+
+  // Case BD: "Kelas 4" -> grade 4
+  assert(resolveGrade(null, 'Kelas 4') === 4, 'Case BD: Explicit grade string "Kelas 4" resolves to 4');
+
+  // Case BE: "Kelas 10" -> grade 10
+  assert(resolveGrade(null, 'Kelas 10') === 10, 'Case BE: Explicit grade string "Kelas 10" resolves to 10');
+
+  // Case BF: "Kelas 4-5" -> unresolved (undefined)
+  assert(
+    resolveGrade(null, 'Kelas 4-5') === undefined,
+    'Case BF: Ambiguous range grade "Kelas 4-5" resolves to undefined without guessing'
+  );
+
+  // Case BG: "4/5" -> unresolved (undefined)
+  assert(
+    resolveGrade(null, '4/5') === undefined,
+    'Case BG: Slash grade "4/5" resolves to undefined without guessing'
+  );
+
+  // Case BH: "TK-A" -> unresolved (undefined)
+  assert(
+    resolveGrade(null, 'TK-A') === undefined,
+    'Case BH: Non-primary non-grade string "TK-A" resolves to undefined'
+  );
+
+  // Case BI: Unknown level tidak menjadi SD (undefined)
+  const specBI = resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: { ...mockAcademicSettingSD4, level: 'MADRASAH_ALIYAH' as any },
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    specBI.curriculumContext.schoolLevel === undefined,
+    'Case BI: Unknown school level does NOT default to SD (remains undefined)'
+  );
+
+  // Case BJ: Ambiguous evidence tidak menghasilkan INSTRUMENT_RECOMMENDATION_MISMATCH hanya karena recommendation kosong
+  const planForBJ: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-bj',
+    tpIds: ['tp-mat-unmatch'],
+    criterionIds: [],
+    instruments: [{ id: 'inst-1', type: 'WRITTEN_TEST' }],
+  };
+  const tpForBJ: TPData = {
+    id: 'tp-bj',
+    academicSettingId: 'setting-sd-4',
+    items: [
+      {
+        id: 'tp-mat-unmatch',
+        statement: 'Zzqq123 tanpa kata kunci rekomendasi sama sekali',
+        order: 1,
+      } as any,
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+  const specBJ = resolveAssessmentGenerationSpec({
+    assessmentPlan: planForBJ,
+    academicSetting: mockAcademicSettingSD4,
+    tp: tpForBJ,
+  });
+  const hasFakeMismatch = specBJ.resolution.issues.some((i) => i.code === 'INSTRUMENT_RECOMMENDATION_MISMATCH');
+  const hasAmbiguousReview = specBJ.resolution.issues.some((i) => i.code === 'EVIDENCE_RECOMMENDATION_AMBIGUOUS');
+  assert(
+    !hasFakeMismatch && hasAmbiguousReview,
+    'Case BJ: Ambiguous/empty recommendation does NOT create false INSTRUMENT_RECOMMENDATION_MISMATCH'
+  );
+
+  // Case BK: AssessmentPlan tetap tidak termutasi (secondary validation)
+  const deepCopyPlan = JSON.parse(JSON.stringify(mockPlanMatSiap));
+  resolveAssessmentGenerationSpec({
+    assessmentPlan: mockPlanMatSiap,
+    academicSetting: mockAcademicSettingSD4,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  assert(
+    JSON.stringify(mockPlanMatSiap) === JSON.stringify(deepCopyPlan),
+    'Case BK: AssessmentPlan object identity & contents remain strictly immutable across multiple runs'
+  );
+
+  // Case BL: Tidak ada AI/API/generation implementation
+  const anySpec = specA as any;
+  const hasNoAIFeatures =
+    anySpec.aiPrompt === undefined &&
+    anySpec.llmModel === undefined &&
+    anySpec.generatedQuestions === undefined &&
+    anySpec.itemBudget === undefined;
+  assert(
+    hasNoAIFeatures,
+    'Case BL: Spec strictly contains zero AI prompts, LLM models, generated questions, or budgeting constructs'
+  );
+
   console.log(`\n=== REGRESSION TEST RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   if (failed > 0) {
     process.exit(1);

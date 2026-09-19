@@ -163,9 +163,9 @@ export interface ResolvedAssessmentCriterion {
 }
 
 export interface ResolvedAssessmentCurriculumContext {
-  curriculumType: 'KURIKULUM_MERDEKA' | 'K13';
+  curriculumType?: 'KURIKULUM_MERDEKA' | 'K13';
   rawCurriculumName?: string;
-  grade: number;
+  grade?: number;
   schoolLevel?: 'SD' | 'SMP' | 'SMA';
   phase?: string;
 }
@@ -188,7 +188,7 @@ export interface AssessmentGenerationSpec {
   curriculumContext: ResolvedAssessmentCurriculumContext;
   objectives: ResolvedAssessmentObjective[];
   criteria: ResolvedAssessmentCriterion[];
-  generationProfile: AssessmentGenerationProfile;
+  generationProfile?: AssessmentGenerationProfile;
   subjectProfile: SubjectAssessmentProfile;
   evidenceRecommendations: AssessmentEvidenceRecommendation[];
   plannedInstrumentTypes: AssessmentInstrumentType[];
