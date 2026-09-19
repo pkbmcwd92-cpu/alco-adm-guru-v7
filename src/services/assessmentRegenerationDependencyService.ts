@@ -99,22 +99,26 @@ export class AssessmentRegenerationDependencyService {
                 }
               });
             } else if (bp.instrumentId) {
-              // Task semantic instruments linked at instrument level
-              cloned.answerKeys.forEach((ak: any) => {
-                if (ak.instrumentId === bp.instrumentId) {
-                  ak.freshness = 'NEEDS_REVIEW';
-                }
-              });
-              cloned.scoringGuides.forEach((sg: any) => {
-                if (sg.instrumentId === bp.instrumentId) {
-                  sg.freshness = 'NEEDS_REVIEW';
-                }
-              });
-              cloned.rubrics.forEach((rb: any) => {
-                if (rb.instrumentId === bp.instrumentId) {
-                  rb.freshness = 'NEEDS_REVIEW';
-                }
-              });
+              const instrument = (cloned.instruments || []).find((i: any) => i.id === bp.instrumentId);
+              const TASK_INSTRUMENT_TYPES = ['PERFORMANCE', 'ASSIGNMENT', 'PROJECT', 'PRODUCT'];
+              if (instrument && TASK_INSTRUMENT_TYPES.includes(instrument.type)) {
+                // Task semantic instruments linked at instrument level
+                cloned.answerKeys.forEach((ak: any) => {
+                  if (ak.instrumentId === bp.instrumentId) {
+                    ak.freshness = 'NEEDS_REVIEW';
+                  }
+                });
+                cloned.scoringGuides.forEach((sg: any) => {
+                  if (sg.instrumentId === bp.instrumentId) {
+                    sg.freshness = 'NEEDS_REVIEW';
+                  }
+                });
+                cloned.rubrics.forEach((rb: any) => {
+                  if (rb.instrumentId === bp.instrumentId) {
+                    rb.freshness = 'NEEDS_REVIEW';
+                  }
+                });
+              }
             }
           }
         });

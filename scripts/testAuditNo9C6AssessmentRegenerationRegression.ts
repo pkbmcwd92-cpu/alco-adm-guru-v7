@@ -1422,12 +1422,12 @@ async function runTests() {
     const result = await assessmentRegenerationService.regenerate(pkgNoItemLinkage, req, provider);
     assert(result.status === 'REGENERATED', 'Should succeed');
 
-    // Because no item linkage existed, fallback to instrument level is expected
+    // Because no item linkage existed and instrument is WRITTEN_TEST, no fallback to instrument level broad invalidation is permitted under Audit 9C.6 exact linkage constraints
     const ak1 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-1');
     const ak2 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-2');
 
-    assert((ak1 as any)?.freshness === 'NEEDS_REVIEW', 'item-1 answer key must be invalidated');
-    assert((ak2 as any)?.freshness === 'NEEDS_REVIEW', 'item-2 answer key must be invalidated due to instrument level fallback');
+    assert((ak1 as any)?.freshness !== 'NEEDS_REVIEW', 'item-1 answer key must NOT be invalidated');
+    assert((ak2 as any)?.freshness !== 'NEEDS_REVIEW', 'item-2 answer key must NOT be invalidated due to instrument level fallback block');
   });
 
   // Test 74: Blocker 6 - Regenerating ITEM_PROMPT preserves other teacher-edited fields provenance.
@@ -1587,6 +1587,339 @@ async function runTests() {
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
     assert(result.status === 'FAILED', 'Must reject invalid categoryAnswer entry with empty categoryId');
+  });
+
+  // Test 81: Final Hardening - Written instrument tanpa item linkage
+  await test('Final Hardening - Written instrument tanpa item linkage', async () => {
+    const pkg: any = {
+      id: 'pkg-harden-1',
+      assessmentPlanId: 'plan-1',
+      title: 'Harden Test',
+      workflowStatus: 'DRAFT',
+      academicSettingId: 'setting-1',
+      revision: 1,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-1',
+          assessmentIndicator: 'Indikator 1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'written-1',
+          instrumentItemIds: undefined as any,
+        } as any
+      ],
+      instruments: [
+        {
+          id: 'written-1',
+          type: 'WRITTEN_TEST',
+        } as any
+      ],
+      answerKeys: [
+        {
+          id: 'ak-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'ak-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      scoringGuides: [
+        {
+          id: 'sg-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'sg-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      rubrics: [
+        {
+          id: 'rub-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'rub-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ]
+    };
+
+    const sourceBefore = JSON.stringify(pkg);
+    const result = assessmentRegenerationDependencyService.invalidateDependencies(pkg, 'INDICATOR', 'bp-1');
+    const sourceAfter = JSON.stringify(pkg);
+
+    assert(sourceBefore === sourceAfter, 'Source package must not be mutated');
+    assert((result.blueprintItems[0] as any).freshness === 'STALE', 'bp-1.freshness must be STALE');
+    assert((result.answerKeys[0] as any).freshness === 'CURRENT', 'answerKey item-1 must be unchanged');
+    assert((result.answerKeys[1] as any).freshness === 'CURRENT', 'answerKey item-2 must be unchanged');
+    assert((result.scoringGuides[0] as any).freshness === 'CURRENT', 'scoringGuide item-1 must be unchanged');
+    assert((result.scoringGuides[1] as any).freshness === 'CURRENT', 'scoringGuide item-2 must be unchanged');
+    assert((result.rubrics[0] as any).freshness === 'CURRENT', 'rubric item-1 must be unchanged');
+    assert((result.rubrics[1] as any).freshness === 'CURRENT', 'rubric item-2 must be unchanged');
+  });
+
+  // Test 82: Final Hardening - Written instrument dengan exact item linkage
+  await test('Final Hardening - Written instrument dengan exact item linkage', async () => {
+    const pkg: any = {
+      id: 'pkg-harden-2',
+      assessmentPlanId: 'plan-1',
+      title: 'Harden Test',
+      workflowStatus: 'DRAFT',
+      academicSettingId: 'setting-1',
+      revision: 1,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-1',
+          assessmentIndicator: 'Indikator 1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'written-1',
+          instrumentItemIds: ['item-1'],
+        } as any,
+        {
+          id: 'bp-2',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-2',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-2',
+          assessmentIndicator: 'Indikator 2',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'written-1',
+          instrumentItemIds: ['item-2'],
+        } as any
+      ],
+      instruments: [
+        {
+          id: 'written-1',
+          type: 'WRITTEN_TEST',
+        } as any
+      ],
+      answerKeys: [
+        {
+          id: 'ak-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'ak-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      scoringGuides: [
+        {
+          id: 'sg-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'sg-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      rubrics: [
+        {
+          id: 'rub-1',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-1',
+          freshness: 'CURRENT',
+        } as any,
+        {
+          id: 'rub-2',
+          instrumentId: 'written-1',
+          instrumentItemId: 'item-2',
+          freshness: 'CURRENT',
+        } as any
+      ]
+    };
+
+    const sourceBefore = JSON.stringify(pkg);
+    const result = assessmentRegenerationDependencyService.invalidateDependencies(pkg, 'INDICATOR', 'bp-1');
+    const sourceAfter = JSON.stringify(pkg);
+
+    assert(sourceBefore === sourceAfter, 'Source package must not be mutated');
+    assert((result.blueprintItems[0] as any).freshness === 'STALE', 'bp-1.freshness must be STALE');
+    assert((result.blueprintItems[1] as any).freshness !== 'STALE', 'bp-2.freshness must not be STALE');
+    assert((result.answerKeys[0] as any).freshness === 'NEEDS_REVIEW', 'answerKey item-1 must be NEEDS_REVIEW');
+    assert((result.answerKeys[1] as any).freshness === 'CURRENT', 'answerKey item-2 must remain CURRENT');
+    assert((result.scoringGuides[0] as any).freshness === 'NEEDS_REVIEW', 'scoringGuide item-1 must be NEEDS_REVIEW');
+    assert((result.scoringGuides[1] as any).freshness === 'CURRENT', 'scoringGuide item-2 must remain CURRENT');
+    assert((result.rubrics[0] as any).freshness === 'NEEDS_REVIEW', 'rubric item-1 must be NEEDS_REVIEW');
+    assert((result.rubrics[1] as any).freshness === 'CURRENT', 'rubric item-2 must remain CURRENT');
+  });
+
+  // Test 83: Final Hardening - PERFORMANCE task instrument-level linkage
+  await test('Final Hardening - PERFORMANCE task instrument-level linkage', async () => {
+    const pkg: any = {
+      id: 'pkg-harden-3',
+      assessmentPlanId: 'plan-1',
+      title: 'Harden Test',
+      workflowStatus: 'DRAFT',
+      academicSettingId: 'setting-1',
+      revision: 1,
+      blueprintItems: [
+        {
+          id: 'bp-performance',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-1',
+          assessmentIndicator: 'Indikator Kinerja',
+          instrumentType: 'PERFORMANCE',
+          instrumentId: 'performance-1',
+          instrumentItemIds: undefined as any,
+        } as any
+      ],
+      instruments: [
+        {
+          id: 'performance-1',
+          type: 'PERFORMANCE',
+        } as any
+      ],
+      answerKeys: [
+        {
+          id: 'ak-perf',
+          instrumentId: 'performance-1',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      scoringGuides: [
+        {
+          id: 'sg-perf',
+          instrumentId: 'performance-1',
+          freshness: 'CURRENT',
+        } as any
+      ],
+      rubrics: [
+        {
+          id: 'rub-perf',
+          instrumentId: 'performance-1',
+          freshness: 'CURRENT',
+        } as any
+      ]
+    };
+
+    const sourceBefore = JSON.stringify(pkg);
+    const result = assessmentRegenerationDependencyService.invalidateDependencies(pkg, 'INDICATOR', 'bp-performance');
+    const sourceAfter = JSON.stringify(pkg);
+
+    assert(sourceBefore === sourceAfter, 'Source package must not be mutated');
+    assert((result.blueprintItems[0] as any).freshness === 'STALE', 'bp-performance.freshness must be STALE');
+    assert((result.answerKeys[0] as any).freshness === 'NEEDS_REVIEW', 'answerKey performance-1 must be NEEDS_REVIEW');
+    assert((result.scoringGuides[0] as any).freshness === 'NEEDS_REVIEW', 'scoringGuide performance-1 must be NEEDS_REVIEW');
+    assert((result.rubrics[0] as any).freshness === 'NEEDS_REVIEW', 'rubric performance-1 must be NEEDS_REVIEW');
+  });
+
+  // Test 84: Final Hardening - Unknown instrument
+  await test('Final Hardening - Unknown instrument', async () => {
+    const pkg: any = {
+      id: 'pkg-harden-4',
+      assessmentPlanId: 'plan-1',
+      title: 'Harden Test',
+      workflowStatus: 'DRAFT',
+      academicSettingId: 'setting-1',
+      revision: 1,
+      blueprintItems: [
+        {
+          id: 'bp-unknown',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-1',
+          assessmentIndicator: 'Indikator Unknown',
+          instrumentType: 'UNKNOWN_TYPE' as any,
+          instrumentId: 'missing-instrument',
+          instrumentItemIds: undefined as any,
+        } as any
+      ],
+      instruments: [],
+      answerKeys: [
+        {
+          id: 'ak-unknown',
+          instrumentId: 'missing-instrument',
+          freshness: 'CURRENT',
+        } as any
+      ]
+    };
+
+    const sourceBefore = JSON.stringify(pkg);
+    const result = assessmentRegenerationDependencyService.invalidateDependencies(pkg, 'INDICATOR', 'bp-unknown');
+    const sourceAfter = JSON.stringify(pkg);
+
+    assert(sourceBefore === sourceAfter, 'Source package must not be mutated');
+    assert((result.blueprintItems[0] as any).freshness === 'STALE', 'bp-unknown.freshness must be STALE');
+    assert((result.answerKeys[0] as any).freshness === 'CURRENT', 'ak-unknown freshness must remain CURRENT');
+  });
+
+  // Test 85: Final Hardening - Unsupported/non-task instrument
+  await test('Final Hardening - Unsupported/non-task instrument', async () => {
+    const pkg: any = {
+      id: 'pkg-harden-5',
+      assessmentPlanId: 'plan-1',
+      title: 'Harden Test',
+      workflowStatus: 'DRAFT',
+      academicSettingId: 'setting-1',
+      revision: 1,
+      blueprintItems: [
+        {
+          id: 'bp-unsupported',
+          assessmentPlanId: 'plan-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'obj-1',
+          criterionId: 'crit-1',
+          assessmentIndicator: 'Indikator Unsupported',
+          instrumentType: 'PORTFOLIO',
+          instrumentId: 'portfolio-1',
+          instrumentItemIds: undefined as any,
+        } as any
+      ],
+      instruments: [
+        {
+          id: 'portfolio-1',
+          type: 'PORTFOLIO',
+        } as any
+      ],
+      answerKeys: [
+        {
+          id: 'ak-unsupported',
+          instrumentId: 'portfolio-1',
+          freshness: 'CURRENT',
+        } as any
+      ]
+    };
+
+    const sourceBefore = JSON.stringify(pkg);
+    const result = assessmentRegenerationDependencyService.invalidateDependencies(pkg, 'INDICATOR', 'bp-unsupported');
+    const sourceAfter = JSON.stringify(pkg);
+
+    assert(sourceBefore === sourceAfter, 'Source package must not be mutated');
+    assert((result.blueprintItems[0] as any).freshness === 'STALE', 'bp-unsupported.freshness must be STALE');
+    assert((result.answerKeys[0] as any).freshness === 'CURRENT', 'ak-unsupported freshness must remain CURRENT');
   });
 
   console.log(`\nAll 9C.6 Granular Regeneration + Invalidation Tests Passed (${passedCount} tests)`);
