@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText,
   Plus,
@@ -56,6 +56,7 @@ import {
   createEmptyAssessmentPackage,
   validateAssessmentPackage,
   confirmAssessmentPackage,
+  canConfirmAssessmentPackage,
 } from '../../services/assessmentPackageService';
 import { isK13, isMerdeka } from '../../services/curriculumRouter';
 import { resolveAssessmentGenerationUIState } from '../../services/assessmentGenerationUIStateResolver';
@@ -97,6 +98,12 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
 
   const [selectedPlanId, setSelectedPlanId] = useState<string>('');
 
+  // Ref for authoritative current-package lookup (Blocker 4)
+  const latestPackagesRef = useRef(assessmentPackages);
+  useEffect(() => {
+    latestPackagesRef.current = assessmentPackages;
+  }, [assessmentPackages]);
+
   const [activeTab, setActiveTab] = useState<'overview' | 'blueprint' | 'instruments' | 'keys_rubrics' | 'validation'>('overview');
   const [activeInstType, setActiveInstType] = useState<AssessmentInstrumentType | ''>('');
 
@@ -111,6 +118,18 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
   const selectedPlan = assessmentPlans.find((p) => p.id === selectedPlanId);
   const activePackage = assessmentPackages.find((pkg) => pkg.assessmentPlanId === selectedPlanId);
 
+  const validationContext = {
+    academicSetting,
+    assessmentPlan: selectedPlan,
+    tp,
+    k13Analysis,
+    assessmentCriteria,
+  };
+
+  const confirmationEligible = activePackage
+    ? canConfirmAssessmentPackage(activePackage, validationContext).eligible
+    : false;
+
   // Deterministic state machine resolver
   const uiState = resolveAssessmentGenerationUIState({
     selectedPlanId,
@@ -124,6 +143,8 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     tp,
     k13Analysis,
     assessmentCriteria,
+    validationReport,
+    confirmationEligible,
   });
 
   // Synchronize active instrument tab
@@ -134,14 +155,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
       }
     }
   }, [selectedPlan, activeInstType]);
-
-  const validationContext = {
-    academicSetting,
-    assessmentPlan: selectedPlan,
-    tp,
-    k13Analysis,
-    assessmentCriteria,
-  };
 
   const validationResult = activePackage
     ? validateAssessmentPackage(activePackage, validationContext)
@@ -156,12 +169,118 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     setValidationReport(null);
   };
 
-  // Helper to update active package
+  // Helper to update active package with centralized manual edit logic and field-level provenance tracking (Blocker 5)
   const updatePackage = (updated: AssessmentPackage) => {
-    onSaveAssessmentPackage({
-      ...updated,
-      updatedAt: new Date().toISOString(),
+    if (!activePackage) return;
+
+    // 1. Clone package
+    const pkgCopy = JSON.parse(JSON.stringify(updated)) as AssessmentPackage;
+
+    // 2. Intelligently detect what changed between activePackage and updated to add/merge field-level provenance
+    if (activePackage.title !== updated.title) {
+      (pkgCopy as any).provenance = (pkgCopy as any).provenance || {};
+      (pkgCopy as any).provenance.fields = (pkgCopy as any).provenance.fields || {};
+      (pkgCopy as any).provenance.fields['title'] = 'TEACHER_EDITED';
+    }
+    // Detect changed instruments
+    pkgCopy.instruments.forEach((inst: any) => {
+      const oldInst = activePackage.instruments.find((i) => i.id === inst.id);
+      if (oldInst) {
+        inst.provenance = JSON.parse(JSON.stringify((oldInst as any).provenance || {}));
+        const fieldsToCheck = ['task', 'instructions', 'expectedOutput', 'projectBrief', 'productBrief'];
+        fieldsToCheck.forEach((f) => {
+          if (inst[f] !== (oldInst as any)[f]) {
+            inst.provenance = inst.provenance || {};
+            inst.provenance.fields = inst.provenance.fields || {};
+            inst.provenance.fields[f] = 'TEACHER_EDITED';
+          }
+        });
+        // If it's a written instrument, check written items too
+        if (inst.type === 'WRITTEN_TEST') {
+          const wr = inst as WrittenAssessmentInstrument;
+          const oldWr = oldInst as WrittenAssessmentInstrument;
+          wr.items?.forEach((item: any) => {
+            const oldItem = oldWr.items?.find((oi) => oi.id === item.id);
+            if (oldItem) {
+              item.provenance = JSON.parse(JSON.stringify((oldItem as any).provenance || {}));
+              if (item.prompt !== oldItem.prompt) {
+                item.provenance = item.provenance || {};
+                item.provenance.fields = item.provenance.fields || {};
+                item.provenance.fields['prompt'] = 'TEACHER_EDITED';
+              }
+              if (JSON.stringify(item.options) !== JSON.stringify(oldItem.options)) {
+                item.provenance = item.provenance || {};
+                item.provenance.fields = item.provenance.fields || {};
+                item.provenance.fields['options'] = 'TEACHER_EDITED';
+              }
+              if (item.stimulus !== oldItem.stimulus) {
+                item.provenance = item.provenance || {};
+                item.provenance.fields = item.provenance.fields || {};
+                item.provenance.fields['stimulus'] = 'TEACHER_EDITED';
+              }
+            }
+          });
+        }
+      }
     });
+    // Detect changed rubrics
+    pkgCopy.rubrics.forEach((rub: any) => {
+      const oldRub = activePackage.rubrics.find((r) => r.id === rub.id);
+      if (oldRub) {
+        rub.provenance = JSON.parse(JSON.stringify((oldRub as any).provenance || {}));
+        const fieldsToCheck = ['title', 'criteria', 'scale'];
+        fieldsToCheck.forEach((f) => {
+          if (JSON.stringify(rub[f]) !== JSON.stringify((oldRub as any)[f])) {
+            rub.provenance = rub.provenance || {};
+            rub.provenance.fields = rub.provenance.fields || {};
+            rub.provenance.fields[f] = 'TEACHER_EDITED';
+          }
+        });
+      }
+    });
+    // Detect changed blueprintItems
+    pkgCopy.blueprintItems.forEach((bp: any) => {
+      const oldBp = activePackage.blueprintItems.find((b) => b.id === bp.id);
+      if (oldBp) {
+        bp.provenance = JSON.parse(JSON.stringify((oldBp as any).provenance || {}));
+        const fieldsToCheck = ['assessmentIndicator', 'materialOrContext'];
+        fieldsToCheck.forEach((f) => {
+          if (bp[f] !== (oldBp as any)[f]) {
+            bp.provenance = bp.provenance || {};
+            bp.provenance.fields = bp.provenance.fields || {};
+            bp.provenance.fields[f] = 'TEACHER_EDITED';
+          }
+        });
+      }
+    });
+    // Detect changed answerKeys
+    pkgCopy.answerKeys.forEach((ak: any) => {
+      const oldAk = activePackage.answerKeys.find((k) => k.id === ak.id);
+      if (oldAk) {
+        ak.provenance = JSON.parse(JSON.stringify((oldAk as any).provenance || {}));
+        const fieldsToCheck = ['value', 'answer', 'optionIds', 'matchingPairs', 'categoryAnswers'];
+        fieldsToCheck.forEach((f) => {
+          if (JSON.stringify(ak[f]) !== JSON.stringify((oldAk as any)[f])) {
+            ak.provenance = ak.provenance || {};
+            ak.provenance.fields = ak.provenance.fields || {};
+            ak.provenance.fields[f] = 'TEACHER_EDITED';
+          }
+        });
+      }
+    });
+
+    // 3. Mark package level attributes: revert to DRAFT, needs review, update timestamp, increment revision
+    pkgCopy.workflowStatus = 'DRAFT';
+    pkgCopy.needsReview = true;
+    pkgCopy.revision = (activePackage.revision ?? 1) + 1;
+    pkgCopy.updatedAt = new Date().toISOString();
+
+    // 4. Invalidate validation state in UI
+    setHasValidated(false);
+    setValidationReport(null);
+
+    // 5. Persist
+    onSaveAssessmentPackage(pkgCopy);
   };
 
   // 9C.7 Auto Generate First Integration
@@ -326,7 +445,12 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
           ...(validationReport.quality?.findings || []),
           ...(validationReport.assembly?.findings || []),
         ] : [],
-        getCurrentPackageRevision: () => activePackage.revision ?? 1,
+        getCurrentPackageRevision: () => {
+          const current = latestPackagesRef.current.find(
+            pkg => pkg.id === request.packageId
+          );
+          return current?.revision;
+        },
       };
 
       const result = await assessmentRegenerationService.regenerate(

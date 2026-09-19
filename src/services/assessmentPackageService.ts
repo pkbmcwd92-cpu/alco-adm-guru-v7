@@ -851,6 +851,18 @@ export function validateAssessmentPackage(
   };
 }
 
+export function canConfirmAssessmentPackage(
+  pkg: AssessmentPackage,
+  context: AssessmentPackageValidationContext
+): { eligible: boolean; errors: string[]; warnings: string[] } {
+  const validation = validateAssessmentPackage(pkg, context);
+  return {
+    eligible: validation.valid,
+    errors: validation.errors,
+    warnings: validation.warnings,
+  };
+}
+
 export function confirmAssessmentPackage(
   pkg: AssessmentPackage,
   context: AssessmentPackageValidationContext

@@ -1,6 +1,7 @@
 import {
   AssessmentPlan,
   AssessmentPackage,
+  AssessmentValidationReport,
 } from '../types';
 import {
   resolveAssessmentGenerationSpec,
@@ -33,6 +34,8 @@ export interface ResolveUIStateInput {
   tp?: any;
   k13Analysis?: any;
   assessmentCriteria?: any[];
+  validationReport?: AssessmentValidationReport | null;
+  confirmationEligible?: boolean;
 }
 
 /**
@@ -49,11 +52,12 @@ export function resolveAssessmentGenerationUIState(
     isGenerating,
     isRegenerating,
     isValidating,
-    hasValidated,
     academicSetting,
     tp,
     k13Analysis,
     assessmentCriteria,
+    validationReport,
+    confirmationEligible,
   } = input;
 
   // 1. NO_PLAN
@@ -110,7 +114,13 @@ export function resolveAssessmentGenerationUIState(
   }
 
   // 9. If package exists but is not SIAP, and has run validation
-  if (hasValidated) {
+  const pkgRevision = activePackage.revision ?? 1;
+  const isReportValidAndNotStale =
+    validationReport &&
+    validationReport.packageRevision === pkgRevision &&
+    validationReport.overallStatus === 'PASS';
+
+  if (isReportValidAndNotStale && confirmationEligible) {
     return 'READY_FOR_CONFIRMATION';
   }
 
