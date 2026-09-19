@@ -439,6 +439,98 @@ Berikan versi teks hasil penyempurnaan dalam bahasa Indonesia yang baku dan eleg
   res.json({ success: true, refinedText: refined, engine: 'pedagogical_engine' });
 });
 
+// 2. Endpoint: AI Assessment Package Generation (9C.4 / 9C.7)
+app.post('/api/ai/generate-assessment-package', async (req, res) => {
+  const { systemPrompt, userPrompt } = req.body || {};
+  if (!userPrompt) {
+    return res.status(400).json({ error: 'User prompt is required' });
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const response = await generateContentWithRetry({
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+        },
+      });
+
+      if (response.text) {
+        return res.json({ success: true, rawText: response.text });
+      }
+    } catch (error: any) {
+      console.error('Gemini generate assessment package failed:', error);
+      return res.status(500).json({ error: error.message || 'Gagal generate perangkat asesmen via Gemini' });
+    }
+  }
+
+  return res.status(501).json({ error: 'Kunci API Gemini belum dikonfigurasi di lingkungan server.' });
+});
+
+// 3. Endpoint: AI Assessment Target Granular Regeneration (9C.6 / 9C.7)
+app.post('/api/ai/regenerate-assessment-target', async (req, res) => {
+  const { contract } = req.body || {};
+  if (!contract) {
+    return res.status(400).json({ error: 'Contract is required' });
+  }
+
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const systemInstruction = `Anda adalah asisten AI kurikulum dan pembuat soal profesional di Indonesia.
+Bantu guru melakukan regenerasi granular (pembaruan bertahap) secara aman untuk target: ${contract.target}.
+Target ID: ${contract.targetId}.
+
+Aturan utama:
+- Tanggapi HANYA dengan objek JSON valid berisi rincian bidang yang diminta di editableContent.
+- Kembalikan bidang yang berubah atau yang baru saja, pertahankan tipe data bidang aslinya.
+- Jangan menambahkan penjelasan, markdown block (seperti \`\`\`json), atau teks pengantar lainnya. Tanggapi dengan format mentah JSON objek saja.`;
+
+      const userPrompt = `Lakukan regenerasi target ${contract.target} untuk Target ID: ${contract.targetId}.
+
+Konteks tidak berubah (Immutable Context):
+${JSON.stringify(contract.immutableContext, null, 2)}
+
+Materi & Kriteria:
+- Kalibrasi Kelas: ${JSON.stringify(contract.gradeCalibration, null, 2)}
+- Profil Subjek: ${JSON.stringify(contract.subjectProfile, null, 2)}
+
+Temuan Validasi yang Perlu Diperbaiki (Validation Findings):
+${JSON.stringify(contract.validationFindings, null, 2)}
+
+Konten yang Dipertahankan (Preserved Content):
+${JSON.stringify(contract.preservedContent, null, 2)}
+
+Konten yang Boleh Diedit & Diminta Regenerasi (Editable/Requested Content):
+${JSON.stringify(contract.editableContent, null, 2)}
+
+Hasilkan pembaruan untuk editableContent tersebut dalam format JSON.`;
+
+      const response = await generateContentWithRetry({
+        contents: userPrompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      if (response.text) {
+        const cleanedText = response.text.trim();
+        const parsed = cleanAndParseJSON(cleanedText, null);
+        if (parsed) {
+          return res.json({ success: true, data: parsed });
+        } else {
+          return res.status(500).json({ error: 'Gagal parse JSON hasil regenerasi AI' });
+        }
+      }
+    } catch (error: any) {
+      console.error('Gemini regenerate assessment target failed:', error);
+      return res.status(500).json({ error: error.message || 'Gagal regenerasi granular via Gemini' });
+    }
+  }
+
+  return res.status(501).json({ error: 'Kunci API Gemini belum dikonfigurasi di lingkungan server.' });
+});
+
 // Vite middleware in dev or static files in prod
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

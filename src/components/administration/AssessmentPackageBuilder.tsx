@@ -50,6 +50,7 @@ import {
   MatchingAssessmentPair,
   CategoryResponseStatement,
   CategoryResponseCategory,
+  AssessmentRegenerationTarget,
 } from '../../types';
 import {
   createEmptyAssessmentPackage,
@@ -57,6 +58,13 @@ import {
   confirmAssessmentPackage,
 } from '../../services/assessmentPackageService';
 import { isK13, isMerdeka } from '../../services/curriculumRouter';
+import { resolveAssessmentGenerationUIState } from '../../services/assessmentGenerationUIStateResolver';
+import { resolveAssessmentGenerationSpec } from '../../services/assessmentGenerationSpecService';
+import { resolveAssessmentGenerationPlan } from '../../services/assessmentGenerationPlanService';
+import { generateAssessmentPackageDraft } from '../../services/assessmentPackageGeneratorService';
+import { assessmentRegenerationService } from '../../services/assessmentRegenerationService';
+import { validateGeneratedAssessment } from '../../services/assessmentValidationService';
+import { RefreshCw, AlertOctagon, Info } from 'lucide-react';
 
 interface AssessmentPackageBuilderProps {
   school: SchoolData;
@@ -92,8 +100,31 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
   const [activeTab, setActiveTab] = useState<'overview' | 'blueprint' | 'instruments' | 'keys_rubrics' | 'validation'>('overview');
   const [activeInstType, setActiveInstType] = useState<AssessmentInstrumentType | ''>('');
 
+  // 9C.7 AI Generation & Validation State
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
+  const [isValidating, setIsValidating] = useState<boolean>(false);
+  const [hasValidated, setHasValidated] = useState<boolean>(false);
+  const [validationReport, setValidationReport] = useState<any>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
   const selectedPlan = assessmentPlans.find((p) => p.id === selectedPlanId);
   const activePackage = assessmentPackages.find((pkg) => pkg.assessmentPlanId === selectedPlanId);
+
+  // Deterministic state machine resolver
+  const uiState = resolveAssessmentGenerationUIState({
+    selectedPlanId,
+    assessmentPlan: selectedPlan,
+    activePackage,
+    isGenerating,
+    isRegenerating,
+    isValidating,
+    hasValidated,
+    academicSetting,
+    tp,
+    k13Analysis,
+    assessmentCriteria,
+  });
 
   // Synchronize active instrument tab
   useEffect(() => {
@@ -121,6 +152,8 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     if (!selectedPlan || selectedPlan.workflowStatus !== 'SIAP') return;
     const newPkg = createEmptyAssessmentPackage(selectedPlan, academicSetting.id, workspace?.id);
     onSaveAssessmentPackage(newPkg);
+    setHasValidated(false);
+    setValidationReport(null);
   };
 
   // Helper to update active package
@@ -129,6 +162,204 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
       ...updated,
       updatedAt: new Date().toISOString(),
     });
+  };
+
+  // 9C.7 Auto Generate First Integration
+  const handleAutoGeneratePackage = async () => {
+    if (!selectedPlan) return;
+    setIsGenerating(true);
+    setGenerationError(null);
+
+    try {
+      // 1. Resolve Generation Spec
+      const spec = resolveAssessmentGenerationSpec({
+        assessmentPlan: selectedPlan,
+        academicSetting,
+        tp,
+        k13Analysis,
+        assessmentCriteria,
+      });
+
+      // 2. Resolve Generation Plan
+      const genPlan = resolveAssessmentGenerationPlan({
+        generationSpec: spec,
+      });
+
+      // 3. Inject standard provider calling the backend proxy endpoint
+      const provider = {
+        generate: async (request: any) => {
+          const res = await fetch('/api/ai/generate-assessment-package', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemPrompt: request.systemPrompt,
+              userPrompt: request.userPrompt,
+            }),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Gagal menghubungi AI (Status ${res.status})`);
+          }
+          const data = await res.json();
+          return { rawText: data.rawText };
+        },
+      };
+
+      // 4. Generate the draft using canonical Generator Service
+      const result = await generateAssessmentPackageDraft({
+        generationPlan: genPlan,
+        academicSettingId: academicSetting.id,
+        provider,
+      });
+
+      if (result.status === 'GENERATED' || result.status === 'PARTIAL') {
+        if (result.generatedPackage) {
+          // Set parent workspace ID if available
+          if (workspace?.id) {
+            result.generatedPackage.workspaceId = workspace.id;
+          }
+          onSaveAssessmentPackage(result.generatedPackage);
+          setHasValidated(false);
+          setValidationReport(null);
+        } else {
+          throw new Error('AI menghasilkan paket kosong.');
+        }
+      } else {
+        const issuesMsg = result.issues.map((i) => i.message).join(', ');
+        throw new Error(issuesMsg || 'AI gagal menyusun draf perangkat.');
+      }
+    } catch (err: any) {
+      console.error('Auto generate package error:', err);
+      setGenerationError(err.message || 'Terjadi kesalahan saat generate draf perangkat.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // 9C.7 Comprehensive Validation Integration
+  const handleValidatePackage = async () => {
+    if (!activePackage || !selectedPlan) return;
+    setIsValidating(true);
+    setGenerationError(null);
+
+    try {
+      const spec = resolveAssessmentGenerationSpec({
+        assessmentPlan: selectedPlan,
+        academicSetting,
+        tp,
+        k13Analysis,
+        assessmentCriteria,
+      });
+
+      const genPlan = resolveAssessmentGenerationPlan({
+        generationSpec: spec,
+      });
+
+      const report = await validateGeneratedAssessment({
+        assessmentPackage: activePackage,
+        generationPlan: genPlan,
+        validationContext,
+        gradeCalibration: spec.generationProfile?.gradeCalibration,
+        subjectProfile: spec.subjectProfile,
+      });
+
+      setValidationReport(report);
+      setHasValidated(true);
+    } catch (err: any) {
+      console.error('Validation error:', err);
+      setGenerationError(err.message || 'Terjadi kesalahan saat validasi perangkat.');
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  // 9C.7 Granular Regeneration Integration
+  const handleRegenerateTarget = async (
+    target: AssessmentRegenerationTarget,
+    targetId: string,
+    explicitOverride: boolean = false
+  ) => {
+    if (!activePackage || !selectedPlan) return;
+    setIsRegenerating(true);
+    setGenerationError(null);
+
+    try {
+      const request = {
+        packageId: activePackage.id,
+        expectedPackageRevision: activePackage.revision ?? 1,
+        target,
+        targetId,
+        explicitTeacherOverride: explicitOverride,
+      };
+
+      const spec = resolveAssessmentGenerationSpec({
+        assessmentPlan: selectedPlan,
+        academicSetting,
+        tp,
+        k13Analysis,
+        assessmentCriteria,
+      });
+
+      const provider = {
+        regenerate: async (contract: any) => {
+          const res = await fetch('/api/ai/regenerate-assessment-target', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contract }),
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `HTTP error ${res.status}`);
+          }
+          const data = await res.json();
+          return data.data;
+        },
+      };
+
+      const extra = {
+        gradeCalibration: spec.generationProfile?.gradeCalibration,
+        subjectProfile: spec.subjectProfile,
+        validationFindings: validationReport ? [
+          ...(validationReport.structural?.findings || []),
+          ...(validationReport.coverage?.findings || []),
+          ...(validationReport.answerVerification?.findings || []),
+          ...(validationReport.quality?.findings || []),
+          ...(validationReport.assembly?.findings || []),
+        ] : [],
+        getCurrentPackageRevision: () => activePackage.revision ?? 1,
+      };
+
+      const result = await assessmentRegenerationService.regenerate(
+        activePackage,
+        request,
+        provider,
+        extra
+      );
+
+      if (result.status === 'REGENERATED') {
+        if (result.regeneratedPackage) {
+          onSaveAssessmentPackage(result.regeneratedPackage);
+          // Auto reset validation to force re-evaluation
+          setHasValidated(false);
+          setValidationReport(null);
+        }
+      } else if (result.status === 'TEACHER_EDIT_PROTECTED') {
+        const confirmOverwrite = window.confirm(
+          'Perhatian: Komponen ini telah Anda edit secara manual. Apakah Anda yakin ingin menimpa (overwrite) perubahan Anda dengan hasil generasi baru dari AI?'
+        );
+        if (confirmOverwrite) {
+          await handleRegenerateTarget(target, targetId, true);
+        }
+      } else {
+        const msg = result.issues?.join(', ') || 'Gagal melakukan regenerasi granular.';
+        throw new Error(msg);
+      }
+    } catch (err: any) {
+      console.error('Granular regeneration error:', err);
+      setGenerationError(err.message || 'Terjadi kesalahan saat regenerasi granular.');
+    } finally {
+      setIsRegenerating(false);
+    }
   };
 
   // If no AssessmentPlans exist with SIAP status
@@ -217,35 +448,166 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
         </div>
       )}
 
-      {/* Unselected Plan or No Package Exists State */}
-      {!selectedPlanId ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-xl mx-auto">
+      {/* UI State Driven Layouts */}
+      {uiState === 'NO_PLAN' ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-xl mx-auto shadow-sm">
           <BookOpen className="w-12 h-12 text-slate-400 mx-auto mb-3" />
           <h4 className="text-lg font-bold text-slate-800 mb-2">Pilih Rencana Asesmen</h4>
           <p className="text-slate-600 text-sm">
             Silakan pilih salah satu Rencana Asesmen berstatus <strong>SIAP</strong> pada dropdown di atas untuk melihat atau menyusun Perangkat Asesmen.
           </p>
         </div>
-      ) : !activePackage ? (
-        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-xl mx-auto">
-          <FolderPlus className="w-12 h-12 text-slate-400 mx-auto mb-3" />
-          <h4 className="text-lg font-bold text-slate-800 mb-2">Belum Ada Perangkat Asesmen Untuk Rencana Ini</h4>
-          <p className="text-slate-600 text-sm mb-6">
-            Rencana Asesmen "{selectedPlan?.displayLabel || selectedPlan?.title}" belum memiliki Perangkat Asesmen (soal, kisi-kisi, rubrik).
+      ) : uiState === 'GENERATION_BLOCKED' ? (
+        <div className="bg-red-50 border border-red-200 text-red-800 p-6 rounded-xl text-center max-w-xl mx-auto shadow-sm">
+          <AlertOctagon className="w-12 h-12 text-red-600 mx-auto mb-3" />
+          <h4 className="text-lg font-bold mb-2">Generasi AI Diblokir</h4>
+          <p className="text-sm text-red-700">
+            Beberapa kelengkapan data kurikulum atau kriteria asesmen belum dikonfigurasi secara lengkap untuk rencana ini. Silakan lengkapi data TP/KD atau kriteria di tab sebelumnya.
           </p>
-          <button
-            onClick={handleCreatePackage}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2 shadow transition"
-          >
-            <Plus className="w-4 h-4" />
-            Buat Perangkat Asesmen Baru
-          </button>
+        </div>
+      ) : uiState === 'READY_TO_GENERATE' ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center max-w-2xl mx-auto space-y-6 shadow-sm">
+          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto">
+            <Sparkles className="w-8 h-8" />
+          </div>
+          <div>
+            <h4 className="text-xl font-bold text-slate-800 mb-2">Rancang Perangkat Asesmen Berbasis AI</h4>
+            <p className="text-slate-600 text-sm max-w-md mx-auto">
+              Rencana Asesmen "{selectedPlan?.displayLabel || selectedPlan?.title}" siap disusun. AI akan merumuskan kisi-kisi, merancang instrumen soal/tugas, menyusun kunci jawaban, serta membuat pedoman penilaian secara otomatis dan presisi sesuai kaidah kurikulum.
+            </p>
+          </div>
+
+          {generationError && (
+            <div className="bg-red-50 border border-red-200 text-red-800 text-xs p-3 rounded-lg text-left max-w-md mx-auto flex items-start gap-2">
+              <AlertOctagon className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <span>{generationError}</span>
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              onClick={handleAutoGeneratePackage}
+              className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-sm inline-flex items-center justify-center gap-2 shadow-md transition-all transform hover:scale-[1.01]"
+            >
+              <Sparkles className="w-4 h-4" />
+              Auto-Generate Perangkat (AI)
+            </button>
+
+            <button
+              onClick={handleCreatePackage}
+              className="w-full sm:w-auto px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold text-sm inline-flex items-center justify-center gap-2 transition"
+            >
+              Mulai dengan Draf Kosong (Manual)
+            </button>
+          </div>
+        </div>
+      ) : uiState === 'GENERATING' ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center max-w-xl mx-auto space-y-4 shadow-sm">
+          <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
+          <h4 className="text-lg font-bold text-slate-800">Menyusun Perangkat Asesmen...</h4>
+          <p className="text-slate-600 text-sm max-w-xs mx-auto">
+            AI sedang merumuskan indikator asesmen, merancang draf soal instrumen, dan memetakan rubrik kriteria penilaian berdasarkan rencana Anda. Proses ini membutuhkan beberapa detik.
+          </p>
+        </div>
+      ) : uiState === 'REGENERATING_TARGET' ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center max-w-xl mx-auto space-y-4 shadow-sm">
+          <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
+          <h4 className="text-lg font-bold text-slate-800">Melakukan Regenerasi Granular...</h4>
+          <p className="text-slate-600 text-sm max-w-xs mx-auto">
+            AI sedang memperbarui elemen terpilih berdasarkan instruksi dan data pendukung secara aman dan bertahap. Mohon tunggu sebentar.
+          </p>
+        </div>
+      ) : uiState === 'FINAL_VALIDATION' ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-12 text-center max-w-xl mx-auto space-y-4 shadow-sm">
+          <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
+          <h4 className="text-lg font-bold text-slate-800">Menjalankan Pengujian Kualitas & Validasi...</h4>
+          <p className="text-slate-600 text-sm max-w-xs mx-auto">
+            Sistem sedang memeriksa keselarasan draf perangkat dengan standar kurikulum kanonikal serta verifikasi kunci jawaban secara deterministik.
+          </p>
         </div>
       ) : (
-        /* Package Editor Active */
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {/* Main Navigation Tabs */}
-          <div className="border-b border-slate-200 bg-slate-50 flex flex-wrap gap-1 p-2">
+        /* Package Editor Active (DRAFT_REVIEW, READY_FOR_CONFIRMATION, SIAP) */
+        <div className="space-y-6">
+          {/* Validation Banner at the top of workspace */}
+          {uiState === 'DRAFT_REVIEW' && (
+            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-2.5">
+                <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-blue-800 text-sm">Draf Perangkat Siap Direview</span>
+                  <p className="text-xs text-blue-700">
+                    Review draf, lakukan penyesuaian manual bila perlu, kemudian jalankan validasi otomatis sebelum menandai perangkat ini sebagai siap pakai.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleValidatePackage}
+                disabled={isValidating}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isValidating ? 'animate-spin' : ''}`} />
+                Jalankan Validasi AI & Kualitas
+              </button>
+            </div>
+          )}
+
+          {uiState === 'READY_FOR_CONFIRMATION' && (
+            <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+              validationReport?.overallStatus === 'FAIL' 
+                ? 'bg-red-50 border-red-200 text-red-800' 
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              <div className="flex items-start gap-2.5">
+                {validationReport?.overallStatus === 'FAIL' ? (
+                  <AlertOctagon className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <span className="font-bold text-sm">
+                    Hasil Validasi Kualitas: {validationReport?.overallStatus === 'FAIL' ? 'BELUM LAYAK (FAIL)' : 'LAYAK PAKAI (READY)'}
+                  </span>
+                  <p className="text-xs">
+                    {validationReport?.overallStatus === 'FAIL' 
+                      ? 'Terdapat kendala kualitas kritis yang terdeteksi. Silakan regenerasi atau perbaiki bidang bermasalah secara manual.' 
+                      : 'Seluruh kriteria struktur, keselarasan, dan kunci jawaban telah terpenuhi secara memuaskan.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  onClick={handleValidatePackage}
+                  disabled={isValidating}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" /> Uji Ulang
+                </button>
+                {validationReport?.overallStatus !== 'FAIL' && (
+                  <button
+                    onClick={() => {
+                      if (!activePackage) return;
+                      const res = confirmAssessmentPackage(activePackage, validationContext);
+                      onSaveAssessmentPackage(res.package);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Konfirmasi & Tandai SIAP
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {generationError && (
+            <div className="bg-red-50 border border-red-200 text-red-800 text-xs p-3 rounded-lg flex items-start gap-2">
+              <AlertOctagon className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+              <span>{generationError}</span>
+            </div>
+          )}
+
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            {/* Main Navigation Tabs */}
+            <div className="border-b border-slate-200 bg-slate-50 flex flex-wrap gap-1 p-2">
             <button
               onClick={() => setActiveTab('overview')}
               className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition ${
@@ -1550,7 +1912,8 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
             )}
           </div>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+  </div>
+);
 };
