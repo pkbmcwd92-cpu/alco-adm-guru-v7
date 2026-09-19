@@ -1409,3 +1409,4 @@ export interface WorkflowStepInfo {
 
 export * from './assessmentGeneration';
 export * from './assessmentValidation';
+export * from './assessmentRegeneration';
