@@ -97,6 +97,7 @@ export interface GeneratedDocumentResult {
   fileName: string;
   record: AppDocumentRecord;
   blob?: Blob;
+  document?: any;
 }
 
 export interface DocumentCatalogItem {

@@ -382,8 +382,9 @@ const planWithDuplicateExp: LearningPlan = {
   id: 'plan-dup-exp',
   learningSteps: { opening: [], core: [], closing: [] },
   learningExperiences: [
-    { id: 'exp-dup-1', phase: 'UNDERSTAND', description: 'Deskripsi 1' },
+    { id: 'exp-unique-1', phase: 'UNDERSTAND', description: 'Deskripsi valid 1' },
     { id: 'exp-dup-1', phase: 'APPLY', description: 'Deskripsi 2' },
+    { id: 'exp-dup-1', phase: 'REFLECT', description: 'Deskripsi 3' },
   ],
 };
 const resAA = validateLearningPlan(planWithDuplicateExp, {
@@ -393,7 +394,7 @@ const resAA = validateLearningPlan(planWithDuplicateExp, {
 });
 assert(resAA.valid === false, 'Case AA: Duplicate experience ID fails validation');
 assert(resAA.errors.some((e) => e.includes('duplikasi ID')), 'Case AA: Reports duplicate ID error');
-// Since first has dup check or second fails, check that activity requirement fails if neither is fully valid or has error
+// Verify that valid unique experience is counted (1), but duplicate is rejected and does not increment validExpCount inappropriately
 const planWithOnlyDuplicateExps: LearningPlan = {
   ...planWithExperiences,
   id: 'plan-dup-all',
@@ -408,7 +409,26 @@ const resAA2 = validateLearningPlan(planWithOnlyDuplicateExps, {
   tp: mockTP,
   atp: mockATP,
 });
+assert(resAA2.valid === false, 'Case AA2: Plan with duplicate IDs fails validation');
 assert(resAA2.errors.some((e) => e.includes('duplikasi ID')), 'Case AA2: Detects duplicate experience ID');
+
+// AA3. Duplicate experience where first is duplicate of second with no other valid experiences and no legacy steps
+// When all experiences have errors / invalid IDs and no legacy steps, activity requirement must fail
+const planAllMalformedExps: LearningPlan = {
+  ...planWithExperiences,
+  id: 'plan-all-malformed',
+  learningSteps: { opening: [], core: [], closing: [] },
+  learningExperiences: [
+    { id: '', phase: 'UNDERSTAND', description: 'No ID' },
+  ],
+};
+const resAA3 = validateLearningPlan(planAllMalformedExps, {
+  academicSetting: mockSetting,
+  tp: mockTP,
+  atp: mockATP,
+});
+assert(resAA3.valid === false, 'Case AA3: All malformed experiences fail validation');
+assert(resAA3.errors.some((e) => e.includes('wajib memiliki aktivitas pembelajaran')), 'Case AA3: Activity requirement fails when only malformed experiences present');
 
 // AB. Dangling linkedTpId tidak dihitung sebagai valid experience
 const planWithDanglingTpExp: LearningPlan = {
@@ -517,6 +537,41 @@ const resAG = validateLearningPlan(planDurationInf, {
 assert(resAG.valid === false, 'Case AG: durationMinutes = Infinity is invalid');
 assert(resAG.errors.some((e) => e.includes('durationMinutes') && e.includes('tidak valid')), 'Case AG: Reports invalid durationMinutes for Infinity');
 
+// AG2. durationMinutes = -Infinity → invalid
+const planDurationNegInf: LearningPlan = {
+  ...planWithExperiences,
+  id: 'plan-dur-neginf',
+  learningSteps: { opening: [], core: [], closing: [] },
+  learningExperiences: [
+    { id: 'exp-neginf', phase: 'UNDERSTAND', description: '-Infinity duration', durationMinutes: -Infinity },
+  ],
+};
+const resAG2 = validateLearningPlan(planDurationNegInf, {
+  academicSetting: mockSetting,
+  tp: mockTP,
+  atp: mockATP,
+});
+assert(resAG2.valid === false, 'Case AG2: durationMinutes = -Infinity is invalid');
+assert(resAG2.errors.some((e) => e.includes('durationMinutes') && e.includes('tidak valid')), 'Case AG2: Reports invalid durationMinutes for -Infinity');
+assert(resAG2.errors.some((e) => e.includes('wajib memiliki aktivitas pembelajaran')), 'Case AG2: -Infinity duration does not count as valid experience');
+
+// AG3. durationMinutes = '45' as any (raw non-number runtime input) → invalid
+const planDurationString: LearningPlan = {
+  ...planWithExperiences,
+  id: 'plan-dur-string',
+  learningSteps: { opening: [], core: [], closing: [] },
+  learningExperiences: [
+    { id: 'exp-str', phase: 'UNDERSTAND', description: 'String duration', durationMinutes: '45' as any },
+  ],
+};
+const resAG3 = validateLearningPlan(planDurationString, {
+  academicSetting: mockSetting,
+  tp: mockTP,
+  atp: mockATP,
+});
+assert(resAG3.valid === false, "Case AG3: durationMinutes = '45' string is invalid");
+assert(resAG3.errors.some((e) => e.includes('durationMinutes') && e.includes('tidak valid')), 'Case AG3: Reports invalid durationMinutes for string input');
+
 // AH. positive finite duration → valid
 const planDurationPositive: LearningPlan = {
   ...planWithExperiences,
@@ -577,6 +632,24 @@ const migratedInf = migrateLegacyLearningPlan({
   ],
 }, 'setting-2026');
 assert(migratedInf.learningExperiences?.[0]?.durationMinutes === undefined, 'Case AL: migration duration = Infinity becomes undefined');
+
+// AL2. migration duration = -Infinity → undefined
+const migratedNegInf = migrateLegacyLearningPlan({
+  id: 'mig-neginf',
+  learningExperiences: [
+    { id: 'exp-1', phase: 'UNDERSTAND', description: 'Exp 1', durationMinutes: -Infinity },
+  ],
+}, 'setting-2026');
+assert(migratedNegInf.learningExperiences?.[0]?.durationMinutes === undefined, 'Case AL2: migration duration = -Infinity becomes undefined');
+
+// AL3. migration duration = '45' as any → undefined
+const migratedStr = migrateLegacyLearningPlan({
+  id: 'mig-str',
+  learningExperiences: [
+    { id: 'exp-1', phase: 'UNDERSTAND', description: 'Exp 1', durationMinutes: '45' as any },
+  ],
+}, 'setting-2026');
+assert(migratedStr.learningExperiences?.[0]?.durationMinutes === undefined, 'Case AL3: migration duration = string becomes undefined');
 
 // AM. migration valid positive duration → preserved
 const migratedPos = migrateLegacyLearningPlan({
@@ -651,10 +724,44 @@ async function runDocGenTests() {
   assert(docResult.success === true, 'generateModulAjar produces successful result');
 
   // AQ. Output document canonical headings verification
-  // Verify document generation produces proper Indonesian heading text structure
-  const docChildren = (docResult as any).children || [];
-  // docResult was generated successfully with blank/final mode
-  assert(docResult.success === true, 'Case AQ: Document successfully generated with Indonesian terminology');
+  // Verify document generation produces proper Indonesian heading text structure and extracts docx tree text
+  const docObj = docResult.document;
+  assert(docObj !== undefined, 'Case AQ: Document object is returned in GeneratedDocumentResult');
+
+  // Deep recursive extraction of all string values in docx tree
+  function extractAllStrings(obj: any, found: string[] = []): string[] {
+    if (!obj) return found;
+    if (typeof obj === 'string') {
+      found.push(obj);
+      return found;
+    }
+    if (typeof obj === 'object') {
+      for (const key of Object.keys(obj)) {
+        // Skip large schema URLs or namespace definitions
+        if (typeof obj[key] === 'string' && (obj[key].startsWith('http://') || obj[key].startsWith('urn:'))) {
+          continue;
+        }
+        extractAllStrings(obj[key], found);
+      }
+    }
+    return found;
+  }
+
+  const allDocTexts = extractAllStrings(docObj);
+  const fullDocumentText = allDocTexts.join('\n');
+
+  // Must contain canonical Indonesian headings
+  assert(allDocTexts.some((t) => t.includes('Memahami')), 'Case AQ: Generated document contains "Memahami"');
+  assert(allDocTexts.some((t) => t.includes('Mengaplikasi')), 'Case AQ: Generated document contains "Mengaplikasi"');
+  assert(allDocTexts.some((t) => t.includes('Merefleksi')), 'Case AQ: Generated document contains "Merefleksi"');
+  assert(allDocTexts.some((t) => t === 'A. Memahami'), 'Case AQ: Generated document contains section heading "A. Memahami"');
+  assert(allDocTexts.some((t) => t === 'B. Mengaplikasi'), 'Case AQ: Generated document contains section heading "B. Mengaplikasi"');
+  assert(allDocTexts.some((t) => t === 'C. Merefleksi'), 'Case AQ: Generated document contains section heading "C. Merefleksi"');
+
+  // Must NOT contain old English suffixes in headings
+  assert(!fullDocumentText.includes('Memahami (Understand)'), 'Case AQ: Generated document does NOT contain "Memahami (Understand)"');
+  assert(!fullDocumentText.includes('Mengaplikasi (Apply)'), 'Case AQ: Generated document does NOT contain "Mengaplikasi (Apply)"');
+  assert(!fullDocumentText.includes('Merefleksi (Reflect)'), 'Case AQ: Generated document does NOT contain "Merefleksi (Reflect)"');
 
   console.log('\n====================================================');
   console.log(`TEST RESULTS: ${passedTests} passed, ${failedTests} failed (Total: ${totalTests})`);

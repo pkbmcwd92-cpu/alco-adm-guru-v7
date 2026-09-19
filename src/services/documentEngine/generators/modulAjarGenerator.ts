@@ -353,6 +353,7 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
     title: docTitle,
     fileName,
     blob,
+    document: doc,
     record: {
       id: `doc-modul-${Date.now()}`,
       type: 'MODUL_AJAR',
