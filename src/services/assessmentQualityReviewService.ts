@@ -29,6 +29,17 @@ const VALID_QUALITY_DIMENSIONS: Set<AssessmentQualityDimension> = new Set([
   'DUPLICATION',
 ]);
 
+const TARGET_REQUIRED_DIMENSIONS = new Set<AssessmentQualityDimension>([
+  'CONTENT_ALIGNMENT',
+  'COGNITIVE_ALIGNMENT',
+  'ITEM_CONSTRUCTION',
+  'STIMULUS_QUALITY',
+  'ANSWER_VERIFICATION',
+  'DISTRACTOR_QUALITY',
+  'GRADE_LANGUAGE',
+  'SENSITIVITY',
+]);
+
 const VALID_QUALITY_STATUSES = new Set(['PASS', 'REVIEW', 'FAIL']);
 
 export async function reviewAssessmentPackageQuality(
@@ -95,18 +106,49 @@ export async function reviewAssessmentPackageQuality(
       }
     });
 
+    const itemsWithDistractorsSet = new Set<string>();
+    pkg.instruments.forEach((inst) => {
+      if (inst.type === 'WRITTEN_TEST' && Array.isArray((inst as any).items)) {
+        (inst as any).items.forEach((item: any) => {
+          if (item.options && Array.isArray(item.options) && item.options.length > 0) {
+            itemsWithDistractorsSet.add(item.id);
+          }
+        });
+      }
+    });
+
     let hasMalformedEntry = false;
 
     for (const rawFinding of rawResponse.findings) {
+      if (!rawFinding || typeof rawFinding !== 'object') {
+        hasMalformedEntry = true;
+        continue;
+      }
+
       // Validate finding fields
       const isValidDimension = VALID_QUALITY_DIMENSIONS.has(rawFinding.dimension as AssessmentQualityDimension);
       const isValidStatus = VALID_QUALITY_STATUSES.has(rawFinding.status);
       const isValidReason = typeof rawFinding.reason === 'string' && rawFinding.reason.trim().length > 0;
 
       const targetId = rawFinding.unitId || rawFinding.instrumentItemId || rawFinding.coverageUnitId;
-      const isValidId = !targetId || validUnitIds.has(targetId);
+      const requiresTarget = TARGET_REQUIRED_DIMENSIONS.has(rawFinding.dimension as AssessmentQualityDimension);
 
-      if (!isValidDimension || !isValidStatus || !isValidReason || !isValidId) {
+      let isValidTarget = true;
+      if (requiresTarget) {
+        if (!targetId || typeof targetId !== 'string' || !validUnitIds.has(targetId)) {
+          isValidTarget = false;
+        }
+      } else if (targetId && !validUnitIds.has(targetId)) {
+        isValidTarget = false;
+      }
+
+      if (rawFinding.dimension === 'DISTRACTOR_QUALITY') {
+        if (!targetId || !itemsWithDistractorsSet.has(targetId)) {
+          isValidTarget = false;
+        }
+      }
+
+      if (!isValidDimension || !isValidStatus || !isValidReason || !isValidTarget) {
         hasMalformedEntry = true;
         findings.push({
           code: 'MALFORMED_QUALITY_FINDING',
@@ -140,12 +182,15 @@ export async function reviewAssessmentPackageQuality(
     const hasReview = findings.some((f) => f.status === 'REVIEW') || hasMalformedEntry;
     const status: AssessmentValidationStatus = hasFail ? 'FAIL' : hasReview ? 'REVIEW' : 'PASS';
 
+    // FINDING 8: If any finding was malformed, reviewerStatus MUST be REVIEW_UNAVAILABLE
+    const reviewerStatus = hasMalformedEntry ? 'REVIEW_UNAVAILABLE' : 'COMPLETED';
+
     return {
       section: {
         status,
         findings,
       },
-      reviewerStatus: 'COMPLETED',
+      reviewerStatus,
     };
   } catch (err: any) {
     findings.push({

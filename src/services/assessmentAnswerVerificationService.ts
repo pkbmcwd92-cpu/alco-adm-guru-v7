@@ -6,13 +6,14 @@ import {
   AssessmentAnswerVerificationResult,
   AssessmentAnswerVerificationProvider,
   AssessmentAnswerVerificationRequestItem,
-  WrittenAssessmentItem,
 } from '../types';
 
 export interface VerifyAssessmentAnswersResult {
   section: AssessmentValidationSection;
   itemResults: AssessmentAnswerVerificationResult[];
 }
+
+const ALLOWED_VERIFIER_STATUSES = new Set(['VERIFIED', 'REVIEW', 'REJECTED']);
 
 export async function verifyAssessmentPackageAnswers(
   pkg: AssessmentPackage,
@@ -159,13 +160,23 @@ export async function verifyAssessmentPackageAnswers(
           proposedAnswerKey: answerKey || { value: item.prompt },
         });
       } else {
-        // If no provider supplied, mark as DETERMINISTIC VERIFIED if structural checks pass
+        // BLOCKER 1: Structural validity alone does NOT mean semantic VERIFIED.
+        // Without semantic verifier provider, mark objective items as REVIEW / MANUAL_REQUIRED.
         itemResults.push({
           instrumentId: inst.id,
           instrumentItemId: item.id,
-          status: 'VERIFIED',
-          method: 'DETERMINISTIC',
-          reason: 'Integritas kunci jawaban valid secara deterministik.',
+          status: 'REVIEW',
+          method: 'MANUAL_REQUIRED',
+          reason: 'Integritas struktural valid, tetapi verifikasi semantik jawaban memerlukan peninjauan manual oleh guru.',
+        });
+        findings.push({
+          code: 'ANSWER_SEMANTIC_VERIFICATION_REQUIRED',
+          status: 'REVIEW',
+          severity: 'REVIEW',
+          instrumentId: inst.id,
+          instrumentItemId: item.id,
+          message: `Jawaban item "${item.id}" valid secara struktural tetapi belum terverifikasi secara semantik.`,
+          source: 'DETERMINISTIC',
         });
       }
     }
@@ -179,71 +190,138 @@ export async function verifyAssessmentPackageAnswers(
         itemsToVerify: itemsToVerifyWithAI,
       });
 
-      const aiResultsMap = new Map((aiResponse?.results || []).map((r) => [r.instrumentItemId, r]));
+      const requestedIdsSet = new Set(itemsToVerifyWithAI.map((i) => i.instrumentItemId));
+      const validAiResultsMap = new Map<string, { status: string; reason?: string }>();
+      const duplicateItemIds = new Set<string>();
+      const invalidStatusItemIds = new Set<string>();
+
+      if (aiResponse && Array.isArray(aiResponse.results)) {
+        const seenItemIds = new Set<string>();
+        for (const res of aiResponse.results) {
+          if (!res || typeof res !== 'object') continue;
+          const itemId = res.instrumentItemId;
+
+          if (!itemId || typeof itemId !== 'string' || !requestedIdsSet.has(itemId)) {
+            // Extra/unknown item ID returned by provider
+            findings.push({
+              code: 'UNEXPECTED_VERIFIER_ITEM_ID',
+              status: 'REVIEW',
+              severity: 'REVIEW',
+              instrumentItemId: typeof itemId === 'string' ? itemId : undefined,
+              message: `Verifikator AI mengembalikan hasil untuk item ID tidak dikenal (${itemId}).`,
+              source: 'ANSWER_VERIFIER',
+            });
+            continue;
+          }
+
+          if (seenItemIds.has(itemId)) {
+            duplicateItemIds.add(itemId);
+            validAiResultsMap.delete(itemId);
+            findings.push({
+              code: 'DUPLICATE_VERIFIER_RESULT',
+              status: 'REVIEW',
+              severity: 'REVIEW',
+              instrumentItemId: itemId,
+              message: `Verifikator AI mengembalikan hasil ganda untuk item "${itemId}".`,
+              source: 'ANSWER_VERIFIER',
+            });
+            continue;
+          }
+
+          seenItemIds.add(itemId);
+
+          if (!ALLOWED_VERIFIER_STATUSES.has(res.status)) {
+            invalidStatusItemIds.add(itemId);
+            findings.push({
+              code: 'INVALID_VERIFIER_STATUS',
+              status: 'REVIEW',
+              severity: 'REVIEW',
+              instrumentItemId: itemId,
+              message: `Verifikator AI mengembalikan status tidak valid (${res.status}) untuk item "${itemId}".`,
+              source: 'ANSWER_VERIFIER',
+            });
+            continue;
+          }
+
+          validAiResultsMap.set(itemId, {
+            status: res.status,
+            reason: typeof res.reason === 'string' ? res.reason : undefined,
+          });
+        }
+      } else {
+        findings.push({
+          code: 'MALFORMED_VERIFIER_RESPONSE',
+          status: 'REVIEW',
+          severity: 'REVIEW',
+          message: 'Respon verifikator AI tidak berformat objek dengan array results.',
+          source: 'ANSWER_VERIFIER',
+        });
+      }
 
       for (const itemReq of itemsToVerifyWithAI) {
-        const aiRes = aiResultsMap.get(itemReq.instrumentItemId);
+        const itemId = itemReq.instrumentItemId;
+        const validRes = validAiResultsMap.get(itemId);
 
-        if (!aiRes || !aiRes.status) {
+        if (!validRes || duplicateItemIds.has(itemId) || invalidStatusItemIds.has(itemId)) {
           itemResults.push({
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
+            instrumentItemId: itemId,
             status: 'REVIEW',
             method: 'MANUAL_REQUIRED',
-            reason: 'Respon verifikator AI tidak valid atau tidak memuat item ID ini.',
+            reason: 'Respon verifikator AI tidak valid, terduplikasi, atau tidak memuat item ID ini.',
           });
           findings.push({
             code: 'ANSWER_VERIFICATION_UNRESOLVED',
             status: 'REVIEW',
             severity: 'REVIEW',
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
-            message: `Verifikasi jawaban untuk item "${itemReq.instrumentItemId}" tidak mendapatkan hasil AI yang valid.`,
+            instrumentItemId: itemId,
+            message: `Verifikasi jawaban untuk item "${itemId}" tidak mendapatkan hasil AI yang terstruktur dengan valid.`,
             source: 'ANSWER_VERIFIER',
           });
           continue;
         }
 
-        if (aiRes.status === 'VERIFIED') {
+        if (validRes.status === 'VERIFIED') {
           itemResults.push({
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
+            instrumentItemId: itemId,
             status: 'VERIFIED',
             method: 'AI',
-            reason: aiRes.reason || 'Kunci jawaban terverifikasi tepat oleh AI verifier.',
+            reason: validRes.reason || 'Kunci jawaban terverifikasi tepat oleh AI verifier.',
           });
-        } else if (aiRes.status === 'REJECTED') {
+        } else if (validRes.status === 'REJECTED') {
           itemResults.push({
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
+            instrumentItemId: itemId,
             status: 'REJECTED',
             method: 'AI',
-            reason: aiRes.reason || 'Kunci jawaban ditolak oleh AI verifier karena tidak tepat.',
+            reason: validRes.reason || 'Kunci jawaban ditolak oleh AI verifier karena tidak tepat.',
           });
           findings.push({
             code: 'WRONG_SEMANTIC_ANSWER',
             status: 'FAIL',
             severity: 'BLOCKING',
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
-            message: `Kunci jawaban untuk item "${itemReq.instrumentItemId}" ditolak: ${aiRes.reason || 'Kunci jawaban tidak tepat.'}`,
+            instrumentItemId: itemId,
+            message: `Kunci jawaban untuk item "${itemId}" ditolak: ${validRes.reason || 'Kunci jawaban tidak tepat.'}`,
             source: 'ANSWER_VERIFIER',
           });
         } else {
           itemResults.push({
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
+            instrumentItemId: itemId,
             status: 'REVIEW',
             method: 'MANUAL_REQUIRED',
-            reason: aiRes.reason || 'Jawaban memerlukan peninjauan manual oleh guru.',
+            reason: validRes.reason || 'Jawaban memerlukan peninjauan manual oleh guru.',
           });
           findings.push({
             code: 'ANSWER_VERIFICATION_REVIEW',
             status: 'REVIEW',
             severity: 'REVIEW',
             instrumentId: itemReq.instrumentId,
-            instrumentItemId: itemReq.instrumentItemId,
-            message: `Verifikasi jawaban item "${itemReq.instrumentItemId}" memerlukan peninjauan manual: ${aiRes.reason || 'Ambiguitas jawaban.'}`,
+            instrumentItemId: itemId,
+            message: `Verifikasi jawaban item "${itemId}" memerlukan peninjauan manual: ${validRes.reason || 'Ambiguitas jawaban.'}`,
             source: 'ANSWER_VERIFIER',
           });
         }

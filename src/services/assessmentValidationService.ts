@@ -81,7 +81,7 @@ export function runStructuralAssessmentValidation(
     }
   }
 
-  // Check dangling instrument items in blueprint
+  // FINDING 10: Check blueprint.instrumentId linkage & conflict validation
   for (const bpItem of pkg.blueprintItems || []) {
     if (bpItem.instrumentId) {
       const inst = pkg.instruments.find((i) => i.id === bpItem.instrumentId);
@@ -94,6 +94,50 @@ export function runStructuralAssessmentValidation(
           message: `Item kisi-kisi merujuk instrumen (${bpItem.instrumentId}) yang tidak ada.`,
           source: 'DETERMINISTIC',
         });
+      } else {
+        // Validate type agreement
+        if (bpItem.instrumentType && inst.type !== bpItem.instrumentType) {
+          findings.push({
+            code: 'BLUEPRINT_INSTRUMENT_TYPE_MISMATCH',
+            status: 'FAIL',
+            severity: 'BLOCKING',
+            blueprintItemId: bpItem.id,
+            instrumentId: bpItem.instrumentId,
+            message: `Item kisi-kisi (${bpItem.id}) memiliki instrumentId (${bpItem.instrumentId}) bertipe ${inst.type} yang berbeda dengan instrumentType (${bpItem.instrumentType}).`,
+            source: 'DETERMINISTIC',
+          });
+        }
+
+        // Validate item ownership agreement if instrumentItemIds is provided
+        if (Array.isArray(bpItem.instrumentItemIds) && bpItem.instrumentItemIds.length > 0) {
+          if (inst.type === 'WRITTEN_TEST' && Array.isArray((inst as any).items)) {
+            const instItemIds = new Set(((inst as any).items as any[]).map((i) => i.id));
+            for (const itemId of bpItem.instrumentItemIds) {
+              if (!instItemIds.has(itemId)) {
+                // Check if this item belongs to another instrument
+                const ownerInst = pkg.instruments.find(
+                  (otherInst) =>
+                    otherInst.id !== inst.id &&
+                    'items' in otherInst &&
+                    Array.isArray((otherInst as any).items) &&
+                    (otherInst as any).items.some((i: any) => i.id === itemId)
+                );
+                findings.push({
+                  code: 'BLUEPRINT_INSTRUMENT_ITEM_OWNERSHIP_MISMATCH',
+                  status: 'FAIL',
+                  severity: 'BLOCKING',
+                  blueprintItemId: bpItem.id,
+                  instrumentId: bpItem.instrumentId,
+                  instrumentItemId: itemId,
+                  message: `Item kisi-kisi (${bpItem.id}) merujuk item (${itemId}) yang ${
+                    ownerInst ? `dimiliki oleh instrumen lain (${ownerInst.id})` : `tidak ada pada instrumen (${inst.id})`
+                  }.`,
+                  source: 'DETERMINISTIC',
+                });
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -141,31 +185,7 @@ export function validateAssessmentAssembly(pkg: AssessmentPackage): AssessmentVa
     }
   }
 
-  // 2. Suspicious answer choice pattern (e.g., 5 consecutive identical answer choices)
-  if (pkg.answerKeys && pkg.answerKeys.length >= 5) {
-    let consecutiveCount = 1;
-    let lastKeyChoice: string | null = null;
-
-    for (const ak of pkg.answerKeys) {
-      const choiceStr = ak.optionIds ? ak.optionIds.join(',') : (ak as any).selectedOptionIndices ? (ak as any).selectedOptionIndices.join(',') : ak.value || '';
-      if (choiceStr && choiceStr === lastKeyChoice) {
-        consecutiveCount++;
-        if (consecutiveCount >= 5) {
-          findings.push({
-            code: 'SUSPICIOUS_ANSWER_PATTERN',
-            status: 'REVIEW',
-            severity: 'REVIEW',
-            message: `Pola kunci jawaban berulang (${consecutiveCount} kali berturut-turut opsi '${choiceStr}').`,
-            source: 'DETERMINISTIC',
-          });
-          break;
-        }
-      } else {
-        lastKeyChoice = choiceStr;
-        consecutiveCount = 1;
-      }
-    }
-  }
+  // FINDING 9: Removed arbitrary consecutive answer choice threshold heuristic.
 
   const hasFail = findings.some((f) => f.status === 'FAIL');
   const hasReview = findings.some((f) => f.status === 'REVIEW');
@@ -228,9 +248,9 @@ export async function validateGeneratedAssessment(
     overallStatus = 'REVIEW';
   }
 
-  // Return validation report without mutating input assessment package
-  const reportId = `val_rep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  // FINDING 6: Deterministic report ID without Math.random()
   const pkgRevision = pkg.revision ?? 1;
+  const reportId = `val_rep_${pkg.id}_rev_${pkgRevision}`;
 
   return {
     id: reportId,

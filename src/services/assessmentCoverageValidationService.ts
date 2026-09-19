@@ -36,21 +36,11 @@ export function validateAssessmentCoverage(
   }
 
   const planUnitsMap = new Map(generationPlan.coverageUnits.map((u) => [u.id, u]));
-  const matchedPlanUnitIds = new Set<string>();
 
-  // 1. Check each planned coverage unit against package
+  // 1. Check each planned coverage unit against package using CANONICAL coverageUnitId ONLY (BLOCKER 3)
   for (const planUnit of generationPlan.coverageUnits) {
-    // Find blueprint items matching planUnit
-    const matchingBpItems = pkg.blueprintItems.filter((bp) => {
-      if (bp.coverageUnitId && bp.coverageUnitId === planUnit.id) return true;
-      if (
-        bp.objectiveRefId === planUnit.objectiveRefId &&
-        (!planUnit.criterionId || bp.criterionId === planUnit.criterionId)
-      ) {
-        return true;
-      }
-      return false;
-    });
+    // Exact coverageUnitId match ONLY. No fallback to objectiveRefId/criterionId!
+    const matchingBpItems = pkg.blueprintItems.filter((bp) => bp.coverageUnitId === planUnit.id);
 
     if (matchingBpItems.length === 0) {
       findings.push({
@@ -64,9 +54,7 @@ export function validateAssessmentCoverage(
       continue;
     }
 
-    matchedPlanUnitIds.add(planUnit.id);
-
-    // Validate matching blueprint items
+    // Validate matching blueprint items against planned objective and criterion
     for (const bpItem of matchingBpItems) {
       if (bpItem.objectiveRefId !== planUnit.objectiveRefId) {
         findings.push({
@@ -92,35 +80,44 @@ export function validateAssessmentCoverage(
         });
       }
 
-      // Find instrument linked to blueprint item
-      const instrument =
-        pkg.instruments.find((inst) => inst.id === bpItem.instrumentId) ||
-        pkg.instruments.find((inst) => inst.type === bpItem.instrumentType) ||
-        pkg.instruments.find((inst) => {
-          if ('items' in inst && Array.isArray((inst as any).items)) {
-            return (inst as any).items.some((item: any) =>
-              item.blueprintItemId === bpItem.id ||
-              item.coverageUnitId === planUnit.id ||
-              bpItem.instrumentItemIds?.includes(item.id)
-            );
-          }
-          return false;
-        });
+      // Resolve instrument deterministically (BLOCKER 4 - NO FIRST-MATCH FALLBACK)
+      const res = resolveInstrumentForBlueprintItem(bpItem, pkg.instruments);
 
-      if (!instrument || instrument.type !== planUnit.instrumentType) {
+      if (res.error === 'AMBIGUOUS_INSTRUMENT_LINKAGE') {
+        findings.push({
+          code: 'AMBIGUOUS_INSTRUMENT_LINKAGE',
+          status: 'FAIL',
+          severity: 'BLOCKING',
+          coverageUnitId: planUnit.id,
+          blueprintItemId: bpItem.id,
+          message: `Terdapat lebih dari satu instrumen bertipe ${bpItem.instrumentType} tanpa keterkaitan ID yang unik.`,
+          source: 'DETERMINISTIC',
+        });
+      } else if (res.error === 'DANGLING_BLUEPRINT_INSTRUMENT' || res.error === 'MISSING_INSTRUMENT') {
         findings.push({
           code: 'INSTRUMENT_TYPE_MISMATCH',
           status: 'FAIL',
           severity: 'BLOCKING',
           coverageUnitId: planUnit.id,
           blueprintItemId: bpItem.id,
-          instrumentId: instrument?.id,
-          message: `Tipe instrumen (${instrument?.type || 'tidak ditemukan'}) tidak sesuai dengan yang direncanakan (${planUnit.instrumentType}).`,
+          message: `Instrumen terencana bertipe ${planUnit.instrumentType} tidak ditemukan atau merujuk ID instrumen yang hilang.`,
           source: 'DETERMINISTIC',
         });
-      }
+      } else if (res.instrument) {
+        const instrument = res.instrument;
+        if (instrument.type !== planUnit.instrumentType) {
+          findings.push({
+            code: 'INSTRUMENT_TYPE_MISMATCH',
+            status: 'FAIL',
+            severity: 'BLOCKING',
+            coverageUnitId: planUnit.id,
+            blueprintItemId: bpItem.id,
+            instrumentId: instrument.id,
+            message: `Tipe instrumen (${instrument.type}) tidak sesuai dengan yang direncanakan (${planUnit.instrumentType}).`,
+            source: 'DETERMINISTIC',
+          });
+        }
 
-      if (instrument) {
         // Validate allocation unit semantics
         const isCompatible = checkAllocationSemantics(planUnit.allocationUnit, instrument.type);
         if (!isCompatible) {
@@ -138,46 +135,60 @@ export function validateAssessmentCoverage(
       }
     }
 
-    // Check planned count vs actual count
-    const expectedCount = planUnit.recommendedCount || 1;
-    let actualCount = 0;
-    for (const bpItem of matchingBpItems) {
-      const inst =
-        pkg.instruments.find((i) => i.id === bpItem.instrumentId) ||
-        pkg.instruments.find((i) => i.type === bpItem.instrumentType) ||
-        pkg.instruments[0];
-      if (inst) {
-        if (inst.type === 'WRITTEN_TEST' && 'items' in inst && Array.isArray((inst as any).items)) {
-          actualCount += ((inst as any).items as any[]).filter(
-            (item) => item.blueprintItemId === bpItem.id || item.coverageUnitId === planUnit.id || bpItem.instrumentItemIds?.includes(item.id)
-          ).length;
-        } else if (inst.type === 'OBSERVATION' && 'aspects' in inst && Array.isArray((inst as any).aspects)) {
-          actualCount += ((inst as any).aspects as any[]).length;
-        } else {
-          actualCount += 1;
+    // BLOCKER 5: Check planned count vs actual count ONLY if recommendedCount is defined
+    if (planUnit.recommendedCount !== undefined) {
+      const expectedCount = planUnit.recommendedCount;
+      let actualCount = 0;
+
+      for (const bpItem of matchingBpItems) {
+        const res = resolveInstrumentForBlueprintItem(bpItem, pkg.instruments);
+        const inst = res.instrument;
+        if (inst) {
+          if (inst.type === 'WRITTEN_TEST' && 'items' in inst && Array.isArray((inst as any).items)) {
+            const count = ((inst as any).items as any[]).filter(
+              (item) =>
+                item.blueprintItemId === bpItem.id ||
+                item.coverageUnitId === planUnit.id ||
+                bpItem.instrumentItemIds?.includes(item.id)
+            ).length;
+            actualCount += count > 0 ? count : (matchingBpItems.length === 1 ? (inst as any).items.length : 1);
+          } else if (inst.type === 'OBSERVATION' && 'aspects' in inst && Array.isArray((inst as any).aspects)) {
+            actualCount += ((inst as any).aspects as any[]).length;
+          } else {
+            actualCount += 1;
+          }
         }
       }
-    }
 
-    if (actualCount === 0) {
-      actualCount = matchingBpItems.length;
-    }
+      if (actualCount === 0) {
+        actualCount = matchingBpItems.length;
+      }
 
-    if (actualCount !== expectedCount) {
-      findings.push({
-        code: 'COVERAGE_COUNT_MISMATCH',
-        status: 'REVIEW',
-        severity: 'REVIEW',
-        coverageUnitId: planUnit.id,
-        message: `Jumlah item/tugas tergenerasi (${actualCount}) tidak sama dengan rencana (${expectedCount}).`,
-        source: 'DETERMINISTIC',
-      });
+      if (actualCount !== expectedCount) {
+        findings.push({
+          code: 'COVERAGE_COUNT_MISMATCH',
+          status: 'REVIEW',
+          severity: 'REVIEW',
+          coverageUnitId: planUnit.id,
+          message: `Jumlah item/tugas tergenerasi (${actualCount}) tidak sama dengan rencana (${expectedCount}).`,
+          source: 'DETERMINISTIC',
+        });
+      }
     }
   }
 
-  // 2. Check for unexpected coverage units in package
+  // 2. Check for missing or unexpected coverage units in package blueprint items
   for (const bpItem of pkg.blueprintItems) {
-    if (bpItem.coverageUnitId && !planUnitsMap.has(bpItem.coverageUnitId)) {
+    if (!bpItem.coverageUnitId) {
+      findings.push({
+        code: 'MISSING_BLUEPRINT_COVERAGE_UNIT_ID',
+        status: 'FAIL',
+        severity: 'BLOCKING',
+        blueprintItemId: bpItem.id,
+        message: `Item kisi-kisi (${bpItem.id}) tidak memiliki coverageUnitId yang valid.`,
+        source: 'DETERMINISTIC',
+      });
+    } else if (!planUnitsMap.has(bpItem.coverageUnitId)) {
       findings.push({
         code: 'UNEXPECTED_COVERAGE_UNIT',
         status: 'REVIEW',
@@ -198,6 +209,54 @@ export function validateAssessmentCoverage(
     status,
     findings,
   };
+}
+
+function resolveInstrumentForBlueprintItem(
+  bpItem: any,
+  instruments: any[]
+): { instrument?: any; error?: 'DANGLING_BLUEPRINT_INSTRUMENT' | 'AMBIGUOUS_INSTRUMENT_LINKAGE' | 'MISSING_INSTRUMENT' } {
+  if (!instruments || instruments.length === 0) {
+    return { error: 'MISSING_INSTRUMENT' };
+  }
+
+  if (bpItem.instrumentId) {
+    const found = instruments.find((i) => i.id === bpItem.instrumentId);
+    if (!found) {
+      return { error: 'DANGLING_BLUEPRINT_INSTRUMENT' };
+    }
+    return { instrument: found };
+  }
+
+  // 1. Try item-level linkage first
+  const itemLinked = instruments.filter((inst) => {
+    if ('items' in inst && Array.isArray((inst as any).items)) {
+      return (inst as any).items.some(
+        (item: any) =>
+          item.blueprintItemId === bpItem.id ||
+          (bpItem.coverageUnitId && item.coverageUnitId === bpItem.coverageUnitId) ||
+          (Array.isArray(bpItem.instrumentItemIds) && bpItem.instrumentItemIds.includes(item.id))
+      );
+    }
+    return false;
+  });
+
+  if (itemLinked.length === 1) {
+    return { instrument: itemLinked[0] };
+  } else if (itemLinked.length > 1) {
+    return { error: 'AMBIGUOUS_INSTRUMENT_LINKAGE' };
+  }
+
+  // 2. Try type matching
+  if (bpItem.instrumentType) {
+    const typeMatches = instruments.filter((i) => i.type === bpItem.instrumentType);
+    if (typeMatches.length === 1) {
+      return { instrument: typeMatches[0] };
+    } else if (typeMatches.length > 1) {
+      return { error: 'AMBIGUOUS_INSTRUMENT_LINKAGE' };
+    }
+  }
+
+  return { error: 'MISSING_INSTRUMENT' };
 }
 
 function checkAllocationSemantics(
