@@ -19,6 +19,10 @@ export class AssessmentRegenerationEligibilityService {
       return null;
     }
 
+    if (code.includes('RUBRIC') || code.toLowerCase().includes('rubric') || (finding.instrumentId && code.toLowerCase().includes('rubric'))) {
+      return 'RUBRIC';
+    }
+
     if (dimension === 'DISTRACTOR_QUALITY') {
       return 'OPTIONS';
     }
@@ -40,10 +44,6 @@ export class AssessmentRegenerationEligibilityService {
         return 'STIMULUS';
       }
       return null;
-    }
-
-    if (code.includes('RUBRIC') || (finding.instrumentId && code.toLowerCase().includes('rubric'))) {
-      return 'RUBRIC';
     }
 
     // Ambiguous findings such as ANSWER_VERIFICATION = REJECTED must NOT guess the target
@@ -84,6 +84,84 @@ export class AssessmentRegenerationEligibilityService {
       return false;
     }
     return this.resolveTargetForFinding(finding) !== null;
+  }
+
+  /**
+   * Resolves exact action, target, and exact targetId for a finding.
+   * Fails closed if exact identity is missing, ambiguous, or structural.
+   */
+  public resolveActionForFinding(finding: AssessmentValidationFinding): {
+    eligible: boolean;
+    target?: AssessmentRegenerationTarget;
+    targetId?: string;
+    label?: string;
+    reason?: string;
+  } {
+    if (this.isStructuralFinding(finding)) {
+      return { eligible: false, reason: 'STRUCTURAL_FINDING' };
+    }
+
+    const target = this.resolveTargetForFinding(finding);
+    if (!target) {
+      return { eligible: false, reason: 'INELIGIBLE_OR_AMBIGUOUS' };
+    }
+
+    let targetId: string | undefined;
+
+    switch (target) {
+      case 'INDICATOR':
+      case 'MATERIAL_CONTEXT':
+        targetId = finding.blueprintItemId;
+        break;
+      case 'ITEM_PROMPT':
+      case 'OPTIONS':
+      case 'STIMULUS':
+        targetId = finding.instrumentItemId;
+        break;
+      case 'PROPOSED_ANSWER':
+        targetId = finding.instrumentItemId || finding.id;
+        break;
+      case 'RUBRIC':
+        targetId = finding.instrumentItemId || finding.id;
+        break;
+      case 'TASK':
+      case 'EVIDENCE_REQUIREMENT':
+      case 'OBSERVATION_CONTENT':
+        targetId = finding.instrumentId;
+        break;
+      case 'SCORING_GUIDE':
+        targetId = finding.instrumentItemId || finding.id;
+        break;
+      default:
+        targetId = finding.instrumentItemId;
+        break;
+    }
+
+    if (!targetId || targetId.trim() === '') {
+      return { eligible: false, reason: 'MISSING_EXACT_IDENTITY' };
+    }
+
+    const labelMap: Record<AssessmentRegenerationTarget, string> = {
+      OPTIONS: 'Buat Ulang Pilihan Jawaban',
+      ITEM_PROMPT: 'Buat Ulang Pertanyaan',
+      STIMULUS: 'Buat Ulang Stimulus',
+      RUBRIC: 'Buat Ulang Rubrik',
+      TASK: 'Buat Ulang Tugas',
+      EVIDENCE_REQUIREMENT: 'Buat Ulang Bukti yang Dikumpulkan',
+      OBSERVATION_CONTENT: 'Buat Ulang Aspek Pengamatan',
+      INDICATOR: 'Buat Ulang Indikator',
+      MATERIAL_CONTEXT: 'Buat Ulang Materi/Konteks',
+      PROPOSED_ANSWER: 'Buat Ulang Jawaban',
+      SCORING_GUIDE: 'Buat Ulang Pedoman Penskoran',
+      COVERAGE_UNIT: 'Buat Ulang Unit Cakupan',
+    };
+
+    return {
+      eligible: true,
+      target,
+      targetId,
+      label: labelMap[target] || `Buat Ulang (${target})`,
+    };
   }
 }
 

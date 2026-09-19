@@ -893,18 +893,48 @@ async function runTests() {
   });
 
   await test('assessmentRegenerationEligibilityService resolves exact eligible targets and fails closed for structural/ambiguous findings', () => {
-    const qualFinding = { dimension: 'DISTRACTOR_QUALITY', code: 'POOR_DISTRACTOR' };
-    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(qualFinding as any) === 'OPTIONS', 'DISTRACTOR_QUALITY must resolve to OPTIONS');
+    const qualFinding = { dimension: 'DISTRACTOR_QUALITY', code: 'POOR_DISTRACTOR', instrumentItemId: 'item-123' };
+    const actionOpt = assessmentRegenerationEligibilityService.resolveActionForFinding(qualFinding as any);
+    assert(actionOpt.eligible === true, 'OPTIONS finding with instrumentItemId must be eligible');
+    assert(actionOpt.target === 'OPTIONS', 'Target must be OPTIONS');
+    assert(actionOpt.targetId === 'item-123', 'TargetId must be item-123');
+    assert(actionOpt.label === 'Buat Ulang Pilihan Jawaban', 'Label must be Buat Ulang Pilihan Jawaban');
 
+    const promptFinding = { dimension: 'ITEM_CONSTRUCTION', code: 'POOR_PROMPT', instrumentItemId: 'item-456' };
+    const actionPrompt = assessmentRegenerationEligibilityService.resolveActionForFinding(promptFinding as any);
+    assert(actionPrompt.eligible === true, 'ITEM_PROMPT finding must be eligible');
+    assert(actionPrompt.target === 'ITEM_PROMPT', 'Target must be ITEM_PROMPT');
+    assert(actionPrompt.targetId === 'item-456', 'TargetId must be item-456');
+
+    const taskFinding = { dimension: 'CONTENT_ALIGNMENT', code: 'TASK_ISSUE', instrumentId: 'inst-789' };
+    // Wait, content_alignment alone doesn't map to task unless code/dimension maps. Let's test RUBRIC or INDICATOR or TASK if applicable
+    const indicatorFinding = { dimension: 'TRACEABILITY', code: 'INDICATOR_ISSUE', blueprintItemId: 'bp-999' };
+    // Wait, what maps to INDICATOR? Let's check resolveTargetForFinding. Actually resolveTargetForFinding maps DISTRACTOR_QUALITY->OPTIONS, STIMULUS_QUALITY->STIMULUS, ITEM_CONSTRUCTION->ITEM_PROMPT, GRADE_LANGUAGE->ITEM_PROMPT/STIMULUS, code.includes('RUBRIC')->RUBRIC.
+    const rubricFinding = { dimension: 'ITEM_CONSTRUCTION', code: 'RUBRIC_QUALITY', instrumentItemId: 'rub-111' };
+    const actionRubric = assessmentRegenerationEligibilityService.resolveActionForFinding(rubricFinding as any);
+    assert(actionRubric.eligible === true, 'RUBRIC finding must be eligible');
+    assert(actionRubric.target === 'RUBRIC', 'Target must be RUBRIC');
+    assert(actionRubric.targetId === 'rub-111', 'TargetId must be rub-111');
+
+    // Fail closed: OPTIONS finding with instrumentId ONLY (missing instrumentItemId) must FAIL CLOSED (not use instrumentId)
+    const wrongIdFinding = { dimension: 'DISTRACTOR_QUALITY', code: 'POOR_DISTRACTOR', instrumentId: 'inst-123' };
+    const actionWrong = assessmentRegenerationEligibilityService.resolveActionForFinding(wrongIdFinding as any);
+    assert(actionWrong.eligible === false, 'OPTIONS finding missing instrumentItemId must fail closed');
+
+    // Fail closed: Structural finding
     const structFinding = { dimension: 'STRUCTURAL', code: 'DANGLING_BLUEPRINT_INSTRUMENT' };
     assert(assessmentRegenerationEligibilityService.isEligible(structFinding as any) === false, 'Structural finding must be ineligible');
-    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(structFinding as any) === null, 'Structural finding must resolve to null');
+    const actionStruct = assessmentRegenerationEligibilityService.resolveActionForFinding(structFinding as any);
+    assert(actionStruct.eligible === false, 'Structural action must be ineligible');
 
+    // Fail closed: Ambiguous finding
     const gradeFinding = { dimension: 'GRADE_LANGUAGE', code: 'COMPLEX_LANGUAGE' };
-    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(gradeFinding as any) === null, 'Ambiguous GRADE_LANGUAGE must resolve to null');
+    const actionGrade = assessmentRegenerationEligibilityService.resolveActionForFinding(gradeFinding as any);
+    assert(actionGrade.eligible === false, 'Ambiguous GRADE_LANGUAGE must be ineligible');
 
     const ansFinding = { dimension: 'ANSWER_VERIFICATION', code: 'MISMATCH' };
-    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(ansFinding as any) === null, 'Ambiguous ANSWER_VERIFICATION must resolve to null');
+    const actionAns = assessmentRegenerationEligibilityService.resolveActionForFinding(ansFinding as any);
+    assert(actionAns.eligible === false, 'Ambiguous ANSWER_VERIFICATION must be ineligible');
   });
 
   console.log(`\nAll ${passedCount} Deterministic UI State Resolver & Final Hardening Scenarios Passed Successfully!`);

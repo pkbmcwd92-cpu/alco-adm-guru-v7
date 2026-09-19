@@ -2013,7 +2013,7 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                   <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
                     <h5 className="font-bold text-sm text-slate-800 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-blue-600" />
-                      Hasil Pemeriksaan Kualitas AI (9C.6 Eligibility Resolver)
+                      Bagian yang Perlu Diperiksa
                     </h5>
                     {(() => {
                       const allFindings = [
@@ -2029,8 +2029,7 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                       return (
                         <div className="space-y-2">
                           {allFindings.map((finding: any, idx: number) => {
-                            const eligibleTarget = assessmentRegenerationEligibilityService.resolveTargetForFinding(finding);
-                            const isEligible = assessmentRegenerationEligibilityService.isEligible(finding);
+                            const action = assessmentRegenerationEligibilityService.resolveActionForFinding(finding);
                             return (
                               <div key={idx} className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                                 <div>
@@ -2040,13 +2039,13 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                                   </div>
                                 </div>
                                 <div className="flex-shrink-0">
-                                  {isEligible && eligibleTarget ? (
+                                  {action.eligible && action.target && action.targetId ? (
                                     <button
-                                      onClick={() => handleRegenerateTarget(eligibleTarget, finding.instrumentId || finding.itemId)}
+                                      onClick={() => handleRegenerateTarget(action.target!, action.targetId!)}
                                       disabled={isRegenerating}
                                       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-1 shadow-sm transition"
                                     >
-                                      <RefreshCw className="w-3 h-3" /> Buat Ulang ({eligibleTarget})
+                                      <RefreshCw className="w-3 h-3" /> {action.label}
                                     </button>
                                   ) : (
                                     <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-300 rounded-lg font-semibold">
