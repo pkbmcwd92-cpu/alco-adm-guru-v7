@@ -1,5 +1,7 @@
 import { AssessmentPlan, AssessmentPackage } from '../src/types';
 import { resolveAssessmentGenerationUIState } from '../src/services/assessmentGenerationUIStateResolver';
+import { confirmAssessmentPackage } from '../src/services/assessmentPackageService';
+import { assessmentRegenerationEligibilityService } from '../src/services/assessmentRegenerationEligibilityService';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -830,6 +832,79 @@ async function runTests() {
       confirmationEligible: false,
     });
     assert(state === 'DRAFT_REVIEW', 'Ineligible confirmation must yield DRAFT_REVIEW');
+  });
+
+  await test('Actual confirmAssessmentPackage service transitions DRAFT package to SIAP', () => {
+    const validPkgForPlan: any = {
+      id: 'pkg-valid',
+      assessmentPlanId: 'plan-1',
+      academicSettingId: 'setting-1',
+      title: 'Paket Asesmen Valid',
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          objectiveRefId: 'tp-item-1',
+          instrumentType: 'WRITTEN_TEST',
+          weight: 1,
+        },
+      ],
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          title: 'Tes Tertulis',
+          items: [
+            {
+              id: 'item-1',
+              prompt: 'Apa fungsi sel?',
+              itemType: 'MULTIPLE_CHOICE',
+              options: [
+                { id: 'opt-1', label: 'A', text: 'Opsi A', isCorrect: true },
+                { id: 'opt-2', label: 'B', text: 'Opsi B', isCorrect: false },
+              ],
+              correctAnswer: 'A',
+              explanation: 'Penjelasan',
+              cognitiveLevel: 'C3',
+              objectiveRefId: 'tp-item-1',
+            },
+          ],
+        },
+      ],
+      answerKeys: [],
+      scoringGuides: [],
+      rubrics: [],
+      workflowStatus: 'DRAFT',
+      needsReview: true,
+      createdAt: '2026-09-18T00:00:00.000Z',
+      updatedAt: '2026-09-18T00:00:00.000Z',
+    };
+    const validationContext = {
+      academicSetting: mockAcademicSetting,
+      assessmentPlan: mockValidPlan,
+      tp: mockTPData,
+      k13Analysis: undefined,
+      assessmentCriteria: mockAssessmentCriteria,
+      validationReport: mockPassReport,
+      confirmationEligible: true,
+    };
+    const result = confirmAssessmentPackage(validPkgForPlan, validationContext as any);
+    assert(result.success === true, `confirmAssessmentPackage should succeed: ${result.errors.join(', ')}`);
+    assert(result.package.workflowStatus === 'SIAP', 'confirmAssessmentPackage must yield workflowStatus = SIAP');
+  });
+
+  await test('assessmentRegenerationEligibilityService resolves exact eligible targets and fails closed for structural/ambiguous findings', () => {
+    const qualFinding = { dimension: 'DISTRACTOR_QUALITY', code: 'POOR_DISTRACTOR' };
+    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(qualFinding as any) === 'OPTIONS', 'DISTRACTOR_QUALITY must resolve to OPTIONS');
+
+    const structFinding = { dimension: 'STRUCTURAL', code: 'DANGLING_BLUEPRINT_INSTRUMENT' };
+    assert(assessmentRegenerationEligibilityService.isEligible(structFinding as any) === false, 'Structural finding must be ineligible');
+    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(structFinding as any) === null, 'Structural finding must resolve to null');
+
+    const gradeFinding = { dimension: 'GRADE_LANGUAGE', code: 'COMPLEX_LANGUAGE' };
+    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(gradeFinding as any) === null, 'Ambiguous GRADE_LANGUAGE must resolve to null');
+
+    const ansFinding = { dimension: 'ANSWER_VERIFICATION', code: 'MISMATCH' };
+    assert(assessmentRegenerationEligibilityService.resolveTargetForFinding(ansFinding as any) === null, 'Ambiguous ANSWER_VERIFICATION must resolve to null');
   });
 
   console.log(`\nAll ${passedCount} Deterministic UI State Resolver & Final Hardening Scenarios Passed Successfully!`);

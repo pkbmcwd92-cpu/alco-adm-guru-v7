@@ -64,6 +64,7 @@ import { resolveAssessmentGenerationSpec } from '../../services/assessmentGenera
 import { resolveAssessmentGenerationPlan } from '../../services/assessmentGenerationPlanService';
 import { generateAssessmentPackageDraft } from '../../services/assessmentPackageGeneratorService';
 import { assessmentRegenerationService } from '../../services/assessmentRegenerationService';
+import { assessmentRegenerationEligibilityService } from '../../services/assessmentRegenerationEligibilityService';
 import { validateGeneratedAssessment } from '../../services/assessmentValidationService';
 import { RefreshCw, AlertOctagon, Info } from 'lucide-react';
 
@@ -2005,6 +2006,60 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
                         <li key={i}>{warn}</li>
                       ))}
                     </ul>
+                  </div>
+                )}
+
+                {validationReport && (
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
+                    <h5 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      Hasil Pemeriksaan Kualitas AI (9C.6 Eligibility Resolver)
+                    </h5>
+                    {(() => {
+                      const allFindings = [
+                        ...(validationReport.structural?.findings || []),
+                        ...(validationReport.coverage?.findings || []),
+                        ...(validationReport.answerVerification?.findings || []),
+                        ...(validationReport.quality?.findings || []),
+                        ...(validationReport.assembly?.findings || []),
+                      ];
+                      if (allFindings.length === 0) {
+                        return <p className="text-xs text-slate-500">Tidak ada temuan kualitas AI. Perangkat siap.</p>;
+                      }
+                      return (
+                        <div className="space-y-2">
+                          {allFindings.map((finding: any, idx: number) => {
+                            const eligibleTarget = assessmentRegenerationEligibilityService.resolveTargetForFinding(finding);
+                            const isEligible = assessmentRegenerationEligibilityService.isEligible(finding);
+                            return (
+                              <div key={idx} className="p-3 bg-slate-50 rounded-lg border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                                <div>
+                                  <div className="font-semibold text-slate-800 flex items-center gap-2">
+                                    <span className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-bold uppercase">{finding.dimension || finding.code}</span>
+                                    <span>{finding.message || finding.description || finding.code}</span>
+                                  </div>
+                                </div>
+                                <div className="flex-shrink-0">
+                                  {isEligible && eligibleTarget ? (
+                                    <button
+                                      onClick={() => handleRegenerateTarget(eligibleTarget, finding.instrumentId || finding.itemId)}
+                                      disabled={isRegenerating}
+                                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-1 shadow-sm transition"
+                                    >
+                                      <RefreshCw className="w-3 h-3" /> Buat Ulang ({eligibleTarget})
+                                    </button>
+                                  ) : (
+                                    <span className="px-3 py-1 bg-amber-100 text-amber-800 border border-amber-300 rounded-lg font-semibold">
+                                      Periksa Manual
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
