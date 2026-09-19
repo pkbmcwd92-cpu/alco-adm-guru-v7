@@ -272,17 +272,6 @@ export function validateAssessmentPackage(
           );
         }
       }
-      if ((bp as any).targetScore !== undefined) {
-        if (
-          typeof (bp as any).targetScore !== 'number' ||
-          !Number.isFinite((bp as any).targetScore) ||
-          (bp as any).targetScore < 0
-        ) {
-          errors.push(
-            `Butir kisi-kisi #${idx + 1} memiliki targetScore tidak valid [${(bp as any).targetScore}] (harus angka finite >= 0).`
-          );
-        }
-      }
 
       if (!bp.assessmentIndicator || bp.assessmentIndicator.trim() === '') {
         warnings.push(`Indikator asesmen pada butir kisi-kisi #${idx + 1} belum diisi.`);

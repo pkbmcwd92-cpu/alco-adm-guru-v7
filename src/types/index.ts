@@ -1333,3 +1333,5 @@ export interface WorkflowStepInfo {
   shortLabel: string;
   description: string;
 }
+
+export * from './assessmentGeneration';
