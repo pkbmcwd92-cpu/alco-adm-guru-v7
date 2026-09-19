@@ -160,8 +160,8 @@ const validPlan: AssessmentGenerationPlan = {
   },
 };
 
-async function runAll50Tests() {
-  console.log('=== RUNNING ALL 50 AUDIT 9C.5 REGRESSION TESTS ===\n');
+async function runAll60Tests() {
+  console.log('=== RUNNING ALL 60 AUDIT 9C.5 REGRESSION TESTS ===\n');
 
   // Test 1: Structurally valid wrong answer + no provider -> NOT VERIFIED -> REVIEW / MANUAL_REQUIRED
   await test('1. Structurally valid MCQ without provider returns REVIEW / MANUAL_REQUIRED (Blocker 1)', async () => {
@@ -340,7 +340,7 @@ async function runAll50Tests() {
     assert(res.section.status === 'PASS', 'Performance instrument should pass answer verification section');
   });
 
-  // Test 13: Project/Product/Portfolio/Observation -> NOT_APPLICABLE
+  // Test 13: Project/Observation instruments pass answer verification without binary checks
   await test('13. Project/Observation instruments pass answer verification without binary checks', async () => {
     const nonWrittenPkg: AssessmentPackage = {
       ...validPackage,
@@ -360,7 +360,7 @@ async function runAll50Tests() {
       blueprintItems: [
         {
           id: 'bp-1',
-          coverageUnitId: undefined as any, // missing
+          coverageUnitId: undefined as any,
           objectiveRefId: 'tp-1',
           criterionId: 'crit-1',
           instrumentType: 'WRITTEN_TEST',
@@ -435,8 +435,8 @@ async function runAll50Tests() {
     assert(sec.findings.some((f) => f.code === 'CRITERION_REF_MISMATCH'), 'Expected CRITERION_REF_MISMATCH');
   });
 
-  // Test 18: Two same-type instruments without exact linkage -> ambiguous FAIL (Blocker 4)
-  await test('18. Two instruments of same type without explicit instrumentId linkage triggers AMBIGUOUS_INSTRUMENT_LINKAGE', () => {
+  // Test 18: Explicit ambiguous linkage points across multiple instruments -> AMBIGUOUS_INSTRUMENT_LINKAGE
+  await test('18. Explicit item linkage pointing across multiple instruments triggers AMBIGUOUS_INSTRUMENT_LINKAGE', () => {
     const pkgAmbiguousInst: AssessmentPackage = {
       ...validPackage,
       blueprintItems: [
@@ -445,14 +445,14 @@ async function runAll50Tests() {
           coverageUnitId: 'cu-1',
           objectiveRefId: 'tp-1',
           instrumentType: 'WRITTEN_TEST',
-          instrumentId: undefined, // omitted to force linkage check
-          instrumentItemIds: ['item-1'],
+          instrumentId: undefined,
+          instrumentItemIds: ['item-1', 'item-2'],
           order: 1,
         },
       ],
       instruments: [
-        { id: 'inst-1', type: 'WRITTEN_TEST', title: 'Tes 1', items: [] },
-        { id: 'inst-2', type: 'WRITTEN_TEST', title: 'Tes 2', items: [] },
+        { id: 'inst-1', type: 'WRITTEN_TEST', title: 'Tes 1', items: [{ id: 'item-1', itemType: 'MULTIPLE_CHOICE', prompt: 'P1', order: 1 }] },
+        { id: 'inst-2', type: 'WRITTEN_TEST', title: 'Tes 2', items: [{ id: 'item-2', itemType: 'MULTIPLE_CHOICE', prompt: 'P2', order: 1 }] },
       ],
     };
     const sec = validateAssessmentCoverage(pkgAmbiguousInst, validPlan);
@@ -480,7 +480,7 @@ async function runAll50Tests() {
     assert(sec.status === 'FAIL', 'Dangling instrument ID must NOT fall back to pkg.instruments[0]');
   });
 
-  // Test 20: Missing recommendedCount does not become 1 (Blocker 5)
+  // Test 20: Missing recommendedCount does not become 1
   await test('20. Plan coverage unit with recommendedCount = undefined does NOT assume 1 and does NOT flag mismatch', () => {
     const planNoCount: AssessmentGenerationPlan = {
       ...validPlan,
@@ -512,7 +512,7 @@ async function runAll50Tests() {
           objectiveRefId: 'tp-1',
           allocationUnit: 'ITEM',
           instrumentType: 'WRITTEN_TEST',
-          recommendedCount: 10, // actual count is 1
+          recommendedCount: 10,
           cognitiveDemand: 'RECALL_UNDERSTAND',
           provenance: [],
           status: 'RESOLVED',
@@ -529,7 +529,7 @@ async function runAll50Tests() {
     assert(JSON.stringify(planCountMismatch) === planCopy, 'Plan must not be mutated');
   });
 
-  // Test 22: Same package/revision generates stable report ID (Finding 6)
+  // Test 22: Same package/revision generates stable report ID
   await test('22. Validate report ID is deterministic across identical package ID and revision', async () => {
     const rep1 = await validateGeneratedAssessment({
       assessmentPackage: validPackage,
@@ -545,7 +545,7 @@ async function runAll50Tests() {
     assert(!rep1.id.includes('undefined') && !rep1.id.includes('NaN'), 'Report ID must be clean string');
   });
 
-  // Test 23: CONTENT_ALIGNMENT without target -> malformed / REVIEW (Finding 7)
+  // Test 23: CONTENT_ALIGNMENT without target -> malformed / REVIEW
   await test('23. Quality finding CONTENT_ALIGNMENT without target ID is flagged as malformed', async () => {
     const provider: AssessmentQualityReviewProvider = {
       review: async () => ({
@@ -554,7 +554,6 @@ async function runAll50Tests() {
             dimension: 'CONTENT_ALIGNMENT',
             status: 'PASS',
             reason: 'Content is aligned',
-            // targetId missing
           } as any,
         ],
       }),
@@ -620,7 +619,7 @@ async function runAll50Tests() {
             dimension: 'DISTRACTOR_QUALITY',
             status: 'PASS',
             reason: 'Good distractors',
-            instrumentItemId: 'essay-1', // Essay items do not have distractors!
+            instrumentItemId: 'essay-1',
           },
         ],
       }),
@@ -629,7 +628,7 @@ async function runAll50Tests() {
     assert(res.reviewerStatus === 'REVIEW_UNAVAILABLE', 'Expected REVIEW_UNAVAILABLE when distractor quality targets essay item');
   });
 
-  // Test 27: Entire quality response malformed -> REVIEW_UNAVAILABLE (Finding 8)
+  // Test 27: Entire quality response malformed -> REVIEW_UNAVAILABLE
   await test('27. Entirely malformed quality response sets reviewerStatus to REVIEW_UNAVAILABLE', async () => {
     const provider: AssessmentQualityReviewProvider = {
       review: async () => ({
@@ -656,7 +655,7 @@ async function runAll50Tests() {
   await test('29. Overall status is FAIL when deterministic structural check fails even if AI quality passes', async () => {
     const brokenPkg: AssessmentPackage = {
       ...validPackage,
-      blueprintItems: [], // structural error
+      blueprintItems: [],
     };
     const qualityProvider: AssessmentQualityReviewProvider = {
       review: async () => ({
@@ -672,8 +671,8 @@ async function runAll50Tests() {
     assert(report.overallStatus === 'FAIL', 'Deterministic FAIL must override AI PASS');
   });
 
-  // Test 30: No fixed answer-pattern threshold (Finding 9)
-  await test('30. 10 consecutive identical answer key choices does NOT trigger pattern error (Finding 9 heuristic removal)', () => {
+  // Test 30: No fixed answer-pattern threshold
+  await test('30. 10 consecutive identical answer key choices does NOT trigger pattern error', () => {
     const tenItems: any[] = [];
     const tenKeys: any[] = [];
     for (let i = 1; i <= 10; i++) {
@@ -692,7 +691,7 @@ async function runAll50Tests() {
         instrumentId: 'inst-1',
         instrumentItemId: `item-${i}`,
         answerType: 'OPTION',
-        optionIds: ['opt-a'], // All 10 are A
+        optionIds: ['opt-a'],
       });
     }
     const tenPkg: AssessmentPackage = {
@@ -729,7 +728,7 @@ async function runAll50Tests() {
     assert(sec.findings.some((f) => f.code === 'EXACT_DUPLICATE_ITEM_PROMPT'), 'Expected EXACT_DUPLICATE_ITEM_PROMPT');
   });
 
-  // Test 33: Blueprint instrument linkage conflict -> FAIL if instrumentId dangling (Finding 10)
+  // Test 33: Structural validation flags DANGLING_BLUEPRINT_INSTRUMENT
   await test('33. Structural validation flags DANGLING_BLUEPRINT_INSTRUMENT when bpItem.instrumentId is missing in pkg', () => {
     const danglingBpPkg: AssessmentPackage = {
       ...validPackage,
@@ -750,7 +749,7 @@ async function runAll50Tests() {
     assert(sec.findings.some((f) => f.code === 'DANGLING_BLUEPRINT_INSTRUMENT'), 'Expected DANGLING_BLUEPRINT_INSTRUMENT finding');
   });
 
-  // Test 34: Blueprint instrumentId/type conflict -> FAIL (Finding 10)
+  // Test 34: Blueprint instrumentId/type conflict -> FAIL
   await test('34. Structural validation flags BLUEPRINT_INSTRUMENT_TYPE_MISMATCH when bpItem.instrumentId points to inst of different type', () => {
     const conflictTypePkg: AssessmentPackage = {
       ...validPackage,
@@ -759,8 +758,8 @@ async function runAll50Tests() {
           id: 'bp-1',
           coverageUnitId: 'cu-1',
           objectiveRefId: 'tp-1',
-          instrumentType: 'WRITTEN_TEST', // specifies WRITTEN_TEST
-          instrumentId: 'inst-perf-1', // points to PERFORMANCE inst
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-perf-1',
           instrumentItemIds: ['item-1'],
           order: 1,
         },
@@ -774,7 +773,7 @@ async function runAll50Tests() {
     assert(sec.findings.some((f) => f.code === 'BLUEPRINT_INSTRUMENT_TYPE_MISMATCH'), 'Expected BLUEPRINT_INSTRUMENT_TYPE_MISMATCH');
   });
 
-  // Test 35: Blueprint instrumentItemIds ownership conflict -> FAIL (Finding 10)
+  // Test 35: Blueprint instrumentItemIds ownership conflict -> FAIL
   await test('35. Structural validation flags BLUEPRINT_INSTRUMENT_ITEM_OWNERSHIP_MISMATCH when item belongs to another inst', () => {
     const ownershipConflictPkg: AssessmentPackage = {
       ...validPackage,
@@ -785,7 +784,7 @@ async function runAll50Tests() {
           objectiveRefId: 'tp-1',
           instrumentType: 'WRITTEN_TEST',
           instrumentId: 'inst-1',
-          instrumentItemIds: ['item-owned-by-inst-2'], // item actually belongs to inst-2!
+          instrumentItemIds: ['item-owned-by-inst-2'],
           order: 1,
         },
       ],
@@ -959,21 +958,343 @@ async function runAll50Tests() {
     assert(typeof runStructuralAssessmentValidation === 'function', 'Structural validator exported');
   });
 
-  // Test 49: 9C.3 regression test compatibility
+  // Test 49: 9C.3 plan generator outputs remain compatible with 9C.5 coverage validator
   await test('49. 9C.3 plan generator outputs remain compatible with 9C.5 coverage validator', () => {
     assert(typeof validateAssessmentCoverage === 'function', 'Coverage validator exported');
   });
 
-  // Test 50: 9B regression test compatibility
+  // Test 50: 9B package validator remains compatible with 9C.5 structural adapter
   await test('50. 9B package validator remains compatible with 9C.5 structural adapter', () => {
     const sec = runStructuralAssessmentValidation(validPackage, mockValidationContext);
     assert(sec.status === 'PASS', '9B structural check passes valid package');
   });
 
+  // --- NEW TESTS 51-60 FOR FINAL HARDENING PATCH ---
+
+  // Test 51 — type is not identity
+  await test('51. Instrument MUST NOT resolve from type alone when instrumentId and item linkage are missing', () => {
+    const noLinkagePkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: undefined,
+          instrumentItemIds: [],
+          order: 1,
+        },
+      ],
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          title: 'Tes 1',
+          items: [{ id: 'unlinked-item-1', itemType: 'MULTIPLE_CHOICE', prompt: 'P1', order: 1 }],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(noLinkagePkg, validPlan);
+    assert(sec.status === 'FAIL', 'Expected FAIL when instrument identity cannot be resolved');
+    assert(sec.findings.some((f) => f.code === 'MISSING_INSTRUMENT_LINKAGE'), 'Expected MISSING_INSTRUMENT_LINKAGE finding');
+  });
+
+  // Test 52 — unique explicit item ownership resolves
+  await test('52. Unique explicit item ownership resolves instrument deterministically without instrumentId', () => {
+    const itemOwnedPkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: undefined,
+          instrumentItemIds: ['item-owned-1'],
+          order: 1,
+        },
+      ],
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          title: 'Tes 1',
+          items: [{ id: 'item-owned-1', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'P1', order: 1 }],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(itemOwnedPkg, validPlan);
+    assert(!sec.findings.some((f) => f.code === 'MISSING_INSTRUMENT_LINKAGE'), 'Should NOT fail with missing linkage when item ownership exists');
+    assert(sec.status === 'PASS', 'Expected PASS on valid unique item ownership');
+  });
+
+  // Test 53 — explicit ownership ambiguous
+  await test('53. Explicit item linkage pointing across multiple instruments triggers AMBIGUOUS_INSTRUMENT_LINKAGE', () => {
+    const ambiguousPkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: undefined,
+          instrumentItemIds: ['item-a', 'item-b'],
+          order: 1,
+        },
+      ],
+      instruments: [
+        { id: 'inst-1', type: 'WRITTEN_TEST', items: [{ id: 'item-a', itemType: 'MULTIPLE_CHOICE', prompt: 'P1', order: 1 }] },
+        { id: 'inst-2', type: 'WRITTEN_TEST', items: [{ id: 'item-b', itemType: 'MULTIPLE_CHOICE', prompt: 'P2', order: 1 }] },
+      ],
+    };
+    const sec = validateAssessmentCoverage(ambiguousPkg, validPlan);
+    assert(sec.status === 'FAIL', 'Expected FAIL on ambiguous linkage');
+    assert(sec.findings.some((f) => f.code === 'AMBIGUOUS_INSTRUMENT_LINKAGE'), 'Expected AMBIGUOUS_INSTRUMENT_LINKAGE finding');
+  });
+
+  // Test 54 — explicit instrumentId wins identity
+  await test('54. Explicit instrumentId resolves exact target even if another instrument shares the same type', () => {
+    const multiInstSameTypePkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-a',
+          instrumentItemIds: ['item-a'],
+          order: 1,
+        },
+      ],
+      instruments: [
+        { id: 'inst-a', type: 'WRITTEN_TEST', items: [{ id: 'item-a', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'Pa', order: 1 }] },
+        { id: 'inst-b', type: 'WRITTEN_TEST', items: [{ id: 'item-b', itemType: 'MULTIPLE_CHOICE', prompt: 'Pb', order: 1 }] },
+      ],
+    };
+    const sec = validateAssessmentCoverage(multiInstSameTypePkg, validPlan);
+    assert(sec.status === 'PASS', 'Expected PASS when explicit instrumentId is specified');
+    assert(!sec.findings.some((f) => f.code === 'AMBIGUOUS_INSTRUMENT_LINKAGE'), 'Should NOT report ambiguous linkage when instrumentId is explicit');
+  });
+
+  // Test 55 — explicit ID/type conflict
+  await test('55. Explicit instrumentId pointing to instrument of conflicting type fails validation', () => {
+    const typeConflictPkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-perf',
+          instrumentItemIds: [],
+          order: 1,
+        },
+      ],
+      instruments: [
+        { id: 'inst-perf', type: 'PERFORMANCE', title: 'Unjuk Kerja', task: 'Tugas pengamatan' },
+      ],
+    };
+    const sec = validateAssessmentCoverage(typeConflictPkg, validPlan);
+    assert(sec.status === 'FAIL', 'Expected FAIL on explicit type conflict');
+    assert(sec.findings.some((f) => f.code === 'INSTRUMENT_TYPE_MISMATCH' || f.code === 'BLUEPRINT_INSTRUMENT_TYPE_MISMATCH'), 'Expected instrument type mismatch finding');
+  });
+
+  // Test 56 — unrelated items must not inflate count
+  await test('56. Unrelated items in same instrument do NOT inflate actualCount', () => {
+    const count2Plan: AssessmentGenerationPlan = {
+      ...validPlan,
+      coverageUnits: [
+        {
+          id: 'cu-1',
+          objectiveRefId: 'tp-1',
+          allocationUnit: 'ITEM',
+          instrumentType: 'WRITTEN_TEST',
+          recommendedCount: 2,
+          cognitiveDemand: 'RECALL_UNDERSTAND',
+          provenance: [],
+          status: 'RESOLVED',
+          issues: [],
+        },
+      ],
+    };
+    const multiItemPkg: AssessmentPackage = {
+      ...validPackage,
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'item-1', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'P1', order: 1 },
+            { id: 'item-2', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'P2', order: 2 },
+            { id: 'item-3', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'P3', order: 3 },
+            { id: 'item-4', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'P4', order: 4 },
+            { id: 'item-5', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'P5', order: 5 },
+          ],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(multiItemPkg, count2Plan);
+    assert(!sec.findings.some((f) => f.code === 'COVERAGE_COUNT_MISMATCH'), 'Should NOT report count mismatch when exactly 2 items belong to cu-1');
+  });
+
+  // Test 57 — one blueprint does not imply all instrument items belong to it
+  await test('57. Instrument containing 5 unlinked items does NOT assume actualCount = 5 or 1, triggers COVERAGE_COUNT_UNRESOLVED', () => {
+    const unlinkedItemsPkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-1',
+          instrumentItemIds: [],
+          order: 1,
+        },
+      ],
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'i1', itemType: 'MULTIPLE_CHOICE', prompt: 'P1', order: 1 },
+            { id: 'i2', itemType: 'MULTIPLE_CHOICE', prompt: 'P2', order: 2 },
+            { id: 'i3', itemType: 'MULTIPLE_CHOICE', prompt: 'P3', order: 3 },
+            { id: 'i4', itemType: 'MULTIPLE_CHOICE', prompt: 'P4', order: 4 },
+            { id: 'i5', itemType: 'MULTIPLE_CHOICE', prompt: 'P5', order: 5 },
+          ],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(unlinkedItemsPkg, validPlan);
+    assert(sec.findings.some((f) => f.code === 'COVERAGE_COUNT_UNRESOLVED'), 'Expected COVERAGE_COUNT_UNRESOLVED when items lack explicit linkage identifiers');
+  });
+
+  // Test 58 — blueprint count fallback prohibited
+  await test('58. matchingBpItems.length is NEVER used as fallback count for actual generated units', () => {
+    const twoBpPkg: AssessmentPackage = {
+      ...validPackage,
+      blueprintItems: [
+        {
+          id: 'bp-1a',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-1',
+          instrumentItemIds: ['item-1'],
+          order: 1,
+        },
+        {
+          id: 'bp-1b',
+          coverageUnitId: 'cu-1',
+          objectiveRefId: 'tp-1',
+          instrumentType: 'WRITTEN_TEST',
+          instrumentId: 'inst-1',
+          instrumentItemIds: [],
+          order: 2,
+        },
+      ],
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'item-1', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1a', coverageUnitId: 'cu-1', prompt: 'P1', order: 1 },
+          ],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(twoBpPkg, validPlan);
+    assert(!sec.findings.some((f) => f.code === 'COVERAGE_COUNT_MISMATCH'), 'Actual count must be 1 (explicitly linked item), not 2 (matchingBpItems.length)');
+  });
+
+  // Test 59 — known zero vs unresolved
+  await test('59. Known Zero produces COVERAGE_COUNT_MISMATCH (0) while unlinked items produce COVERAGE_COUNT_UNRESOLVED', () => {
+    // Case A: Known Zero (inst-1 resolved, but all items explicitly belong to cu-other)
+    const knownZeroPkg: AssessmentPackage = {
+      ...validPackage,
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'i-other', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'P-other', order: 1 },
+          ],
+        },
+      ],
+    };
+    const secA = validateAssessmentCoverage(knownZeroPkg, validPlan);
+    assert(secA.findings.some((f) => f.code === 'COVERAGE_COUNT_MISMATCH'), 'Case A: Expected COVERAGE_COUNT_MISMATCH for known zero count');
+
+    // Case B: Unresolved (inst-1 resolved, items exist but carry no linkage metadata)
+    const unresolvedPkg: AssessmentPackage = {
+      ...validPackage,
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'i-unlinked', itemType: 'MULTIPLE_CHOICE', prompt: 'P-unlinked', order: 1 },
+          ],
+        },
+      ],
+    };
+    const secB = validateAssessmentCoverage(unresolvedPkg, validPlan);
+    assert(secB.findings.some((f) => f.code === 'COVERAGE_COUNT_UNRESOLVED'), 'Case B: Expected COVERAGE_COUNT_UNRESOLVED for unknown count');
+  });
+
+  // Test 60 — count mismatch only from explicit units
+  await test('60. Plan expects 3 units; 2 explicitly linked + 4 unrelated yields actualCount = 2 and COVERAGE_COUNT_MISMATCH', () => {
+    const plan3: AssessmentGenerationPlan = {
+      ...validPlan,
+      coverageUnits: [
+        {
+          id: 'cu-1',
+          objectiveRefId: 'tp-1',
+          allocationUnit: 'ITEM',
+          instrumentType: 'WRITTEN_TEST',
+          recommendedCount: 3,
+          cognitiveDemand: 'RECALL_UNDERSTAND',
+          provenance: [],
+          status: 'RESOLVED',
+          issues: [],
+        },
+      ],
+    };
+    const mixedPkg: AssessmentPackage = {
+      ...validPackage,
+      instruments: [
+        {
+          id: 'inst-1',
+          type: 'WRITTEN_TEST',
+          items: [
+            { id: 'i1', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'P1', order: 1 },
+            { id: 'i2', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-1', coverageUnitId: 'cu-1', prompt: 'P2', order: 2 },
+            { id: 'u1', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'U1', order: 3 },
+            { id: 'u2', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'U2', order: 4 },
+            { id: 'u3', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'U3', order: 5 },
+            { id: 'u4', itemType: 'MULTIPLE_CHOICE', blueprintItemId: 'bp-other', coverageUnitId: 'cu-other', prompt: 'U4', order: 6 },
+          ],
+        },
+      ],
+    };
+    const sec = validateAssessmentCoverage(mixedPkg, plan3);
+    const mismatchFinding = sec.findings.find((f) => f.code === 'COVERAGE_COUNT_MISMATCH');
+    assert(!!mismatchFinding, 'Expected COVERAGE_COUNT_MISMATCH finding');
+    assert(mismatchFinding!.message.includes('(2)'), 'Finding message must report actual count of 2');
+  });
+
   console.log(`\n=== ALL ${passedCount} AUDIT 9C.5 REGRESSION TESTS PASSED PERFECTLY! ===`);
 }
 
-runAll50Tests().catch((e) => {
+runAll60Tests().catch((e) => {
   console.error('Fatal error in regression test suite:', e);
   process.exit(1);
 });
+
+// Locked 9C.5 canonical coverage and instrument linkage invariants.
+
