@@ -170,11 +170,15 @@ export function validateLearningPlan(
     const exp = experiences[i];
     if (!exp) continue;
 
+    let isExperienceValid = true;
+
     // Validate ID
     if (!exp.id || exp.id.trim() === '') {
       errors.push(`Pengalaman Belajar butir ke-${i + 1} memiliki ID kosong.`);
+      isExperienceValid = false;
     } else if (seenExpIds.has(exp.id)) {
       errors.push(`Terdapat duplikasi ID '${exp.id}' pada Pengalaman Belajar (learningExperiences).`);
+      isExperienceValid = false;
     } else {
       seenExpIds.add(exp.id);
     }
@@ -185,13 +189,28 @@ export function validateLearningPlan(
       errors.push(
         `Pengalaman Belajar '${exp.id || i + 1}' memiliki fase tidak sah ('${exp.phase}'). Pilihan yang sah: UNDERSTAND (Memahami), APPLY (Mengaplikasi), REFLECT (Merefleksi).`
       );
+      isExperienceValid = false;
     }
 
     // Validate description
     if (!exp.description || exp.description.trim() === '') {
       errors.push(`Pengalaman Belajar '${exp.id || i + 1}' memiliki deskripsi kosong.`);
-    } else if (validPhases.includes(exp.phase) && exp.id) {
-      validExpCount++;
+      isExperienceValid = false;
+    }
+
+    // Validate durationMinutes if provided
+    if (exp.durationMinutes !== undefined && exp.durationMinutes !== null) {
+      if (
+        typeof exp.durationMinutes !== 'number' ||
+        !Number.isFinite(exp.durationMinutes) ||
+        isNaN(exp.durationMinutes) ||
+        exp.durationMinutes <= 0
+      ) {
+        errors.push(
+          `Pengalaman Belajar '${exp.id || i + 1}' memiliki alokasi waktu (durationMinutes) tidak valid: ${String(exp.durationMinutes)}. Harus berupa bilangan positif terhingga (> 0).`
+        );
+        isExperienceValid = false;
+      }
     }
 
     // Validate linked TP IDs (strictly canonical, no dangling references)
@@ -201,8 +220,13 @@ export function validateLearningPlan(
           errors.push(
             `Pengalaman Belajar '${exp.id || i + 1}' merujuk TP ID '${linkedId}' yang tidak terdaftar dalam perencanaan ini (dangling TP reference).`
           );
+          isExperienceValid = false;
         }
       }
+    }
+
+    if (isExperienceValid) {
+      validExpCount++;
     }
   }
 
@@ -651,7 +675,13 @@ export function migrateLegacyLearningPlan(
           phase: exp.phase,
           description: exp.description || '',
           linkedTpIds: Array.isArray(exp.linkedTpIds) ? exp.linkedTpIds : undefined,
-          durationMinutes: typeof exp.durationMinutes === 'number' ? exp.durationMinutes : undefined,
+          durationMinutes:
+            typeof exp.durationMinutes === 'number' &&
+            Number.isFinite(exp.durationMinutes) &&
+            !isNaN(exp.durationMinutes) &&
+            exp.durationMinutes > 0
+              ? exp.durationMinutes
+              : undefined,
         }))
       : undefined,
     deepLearningContext: legacy?.deepLearningContext,

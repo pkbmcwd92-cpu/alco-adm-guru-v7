@@ -243,9 +243,9 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
         .join('\n')}`;
     };
 
-    addSubSection('A. Memahami (Understand)', formatExpGroup('UNDERSTAND', 'Memahami'));
-    addSubSection('B. Mengaplikasi (Apply)', formatExpGroup('APPLY', 'Mengaplikasi'));
-    addSubSection('C. Merefleksi (Reflect)', formatExpGroup('REFLECT', 'Merefleksi'));
+    addSubSection('A. Memahami', formatExpGroup('UNDERSTAND', 'Memahami'));
+    addSubSection('B. Mengaplikasi', formatExpGroup('APPLY', 'Mengaplikasi'));
+    addSubSection('C. Merefleksi', formatExpGroup('REFLECT', 'Merefleksi'));
   } else {
     addSectionTitle('III. KEGIATAN PEMBELAJARAN');
 
