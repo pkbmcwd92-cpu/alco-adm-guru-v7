@@ -151,6 +151,42 @@ export interface PreGenerationGuardResult {
   issues: AssessmentGenerationIssue[];
 }
 
+export function resolveAuthoritativeAcademicSettingId(
+  input?: Partial<GenerateAssessmentPackageInput>
+): string | undefined {
+  if (
+    input?.academicSettingId &&
+    typeof input.academicSettingId === 'string' &&
+    input.academicSettingId.trim() !== ''
+  ) {
+    return input.academicSettingId.trim();
+  }
+  if (
+    input?.existingPackage?.academicSettingId &&
+    typeof input.existingPackage.academicSettingId === 'string' &&
+    input.existingPackage.academicSettingId.trim() !== ''
+  ) {
+    return input.existingPackage.academicSettingId.trim();
+  }
+  const planAny = input?.generationPlan as any;
+  if (
+    planAny?.academicSettingId &&
+    typeof planAny.academicSettingId === 'string' &&
+    planAny.academicSettingId.trim() !== ''
+  ) {
+    return planAny.academicSettingId.trim();
+  }
+  const specAny = input?.generationPlan?.generationSpec as any;
+  if (
+    specAny?.academicSettingId &&
+    typeof specAny.academicSettingId === 'string' &&
+    specAny.academicSettingId.trim() !== ''
+  ) {
+    return specAny.academicSettingId.trim();
+  }
+  return undefined;
+}
+
 export function validatePreGenerationGuards(
   input: GenerateAssessmentPackageInput
 ): PreGenerationGuardResult {
@@ -198,7 +234,17 @@ export function validatePreGenerationGuards(
     });
   }
 
-  // 5. Coverage Units Checks
+  // 5. Academic Setting ID Resolution Guard (Fail-closed on unresolved / empty)
+  const resolvedSettingId = resolveAuthoritativeAcademicSettingId(input);
+  if (!resolvedSettingId) {
+    issues.push({
+      code: 'ACADEMIC_SETTING_ID_UNRESOLVED',
+      severity: 'BLOCKING',
+      message: 'ID AcademicSetting kanonikal tidak ditemukan atau tidak valid. Generasi dibatalkan demi integritas data.',
+    });
+  }
+
+  // 6. Coverage Units Checks
   if (!plan.coverageUnits || plan.coverageUnits.length === 0) {
     issues.push({
       code: 'NO_COVERAGE_UNITS',
@@ -301,7 +347,7 @@ export function validatePreGenerationGuards(
     }
   });
 
-  // 6. Existing Package Protection Check
+  // 7. Existing Package Protection Check
   if (input.existingPackage) {
     const existing = input.existingPackage;
     if (existing.workflowStatus === 'SIAP') {
@@ -324,7 +370,7 @@ export function validatePreGenerationGuards(
     }
   }
 
-  // 7. Structural review check on plan
+  // 8. Structural review check on plan
   if (plan.resolution?.status === 'NEEDS_REVIEW') {
     const structuralIssues = (plan.resolution?.issues || []).filter(
       (iss) =>
@@ -352,9 +398,13 @@ export function validatePreGenerationGuards(
 export function buildGenerationContract(
   plan: AssessmentGenerationPlan,
   teacherContext?: AssessmentTeacherContext,
-  sourceMaterials?: AssessmentGenerationSource[]
+  sourceMaterials?: AssessmentGenerationSource[],
+  academicSettingId?: string
 ): AssessmentGenerationContract {
   const spec = plan.generationSpec!;
+  const resolvedSettingId =
+    academicSettingId || resolveAuthoritativeAcademicSettingId({ generationPlan: plan }) || '';
+
   const objMap = new Map((spec.objectives || []).map((o) => [o.id, o]));
   const critMap = new Map((spec.criteria || []).map((c) => [c.id, c]));
 
@@ -399,6 +449,7 @@ export function buildGenerationContract(
   return {
     assessmentPlanId: spec.assessmentPlanId,
     assessmentPackageId: spec.assessmentPackageId,
+    academicSettingId: resolvedSettingId,
     curriculumContext: spec.curriculumContext,
     gradeCalibration: spec.generationProfile?.gradeCalibration,
     subjectProfile: spec.subjectProfile,
@@ -628,6 +679,31 @@ export function parseAndValidateRawAIResponse(
       return;
     }
 
+    // Extract candidate provenance & metadata
+    const candIndicator =
+      typeof candidate.assessmentIndicator === 'string' && candidate.assessmentIndicator.trim()
+        ? candidate.assessmentIndicator.trim()
+        : undefined;
+
+    const assessmentIndicator = contractUnit.assessmentIndicator || candIndicator;
+    const indicatorSource: AssessmentGeneratedContentSource | undefined = contractUnit.assessmentIndicator
+      ? contractUnit.indicatorSource || 'TEACHER'
+      : candIndicator
+      ? 'AI_DRAFT'
+      : undefined;
+
+    const candMaterial =
+      typeof candidate.materialOrContext === 'string' && candidate.materialOrContext.trim()
+        ? candidate.materialOrContext.trim()
+        : undefined;
+
+    const materialOrContext = contractUnit.materialOrContext || candMaterial;
+    const materialSource: AssessmentGeneratedContentSource | undefined = contractUnit.materialOrContext
+      ? contractUnit.materialSource || 'TEACHER'
+      : candMaterial
+      ? 'AI_SYNTHETIC'
+      : undefined;
+
     // Semantic Family Validation
     switch (contractUnit.allocationUnit) {
       case 'ITEM': {
@@ -653,6 +729,77 @@ export function parseAndValidateRawAIResponse(
           return;
         }
 
+        let parsedOptions: { id?: string; text: string; isCorrect?: boolean }[] | undefined;
+
+        if (itemType === 'MULTIPLE_CHOICE' || itemType === 'MULTIPLE_SELECT' || Array.isArray(candidate.options)) {
+          if (!Array.isArray(candidate.options) || candidate.options.length < 2) {
+            issues.push({
+              code: 'INVALID_OPTION_STRUCTURE',
+              severity: 'REVIEW',
+              message: `Kandidat ITEM #${idx + 1} tipe ${itemType} wajib memiliki minimal 2 opsi jawaban.`,
+              objectiveRefId: contractUnit.objectiveRefId,
+            });
+            return;
+          }
+
+          const validOpts: { id?: string; text: string; isCorrect?: boolean }[] = [];
+          let hasInvalidOption = false;
+
+          for (let oIdx = 0; oIdx < candidate.options.length; oIdx++) {
+            const opt = candidate.options[oIdx];
+            if (typeof opt === 'string') {
+              const trimmed = opt.trim();
+              if (!trimmed) {
+                hasInvalidOption = true;
+                break;
+              }
+              validOpts.push({ text: trimmed });
+            } else if (opt && typeof opt === 'object' && !Array.isArray(opt)) {
+              if (typeof opt.text !== 'string' || !opt.text.trim()) {
+                hasInvalidOption = true;
+                break;
+              }
+              validOpts.push({
+                id: typeof opt.id === 'string' && opt.id.trim() ? opt.id.trim() : undefined,
+                text: opt.text.trim(),
+                isCorrect: typeof opt.isCorrect === 'boolean' ? opt.isCorrect : undefined,
+              });
+            } else {
+              hasInvalidOption = true;
+              break;
+            }
+          }
+
+          if (hasInvalidOption || validOpts.length < 2) {
+            issues.push({
+              code: 'INVALID_OPTION_TEXT',
+              severity: 'REVIEW',
+              message: `Kandidat ITEM #${idx + 1} memiliki opsi jawaban yang kosong, tidak valid, atau bukan string.`,
+              objectiveRefId: contractUnit.objectiveRefId,
+            });
+            return;
+          }
+
+          parsedOptions = validOpts;
+        }
+
+        const scoringGuideDraft =
+          candidate.scoringGuideDraft && typeof candidate.scoringGuideDraft === 'object'
+            ? {
+                instructions:
+                  typeof candidate.scoringGuideDraft.instructions === 'string' &&
+                  candidate.scoringGuideDraft.instructions.trim()
+                    ? candidate.scoringGuideDraft.instructions.trim()
+                    : undefined,
+                maxScore:
+                  typeof candidate.scoringGuideDraft.maxScore === 'number' &&
+                  Number.isFinite(candidate.scoringGuideDraft.maxScore) &&
+                  candidate.scoringGuideDraft.maxScore > 0
+                    ? candidate.scoringGuideDraft.maxScore
+                    : undefined,
+              }
+            : undefined;
+
         const itemUnit: GeneratedItemUnit = {
           allocationUnit: 'ITEM',
           coverageUnitId: contractUnit.coverageUnitId,
@@ -661,16 +808,10 @@ export function parseAndValidateRawAIResponse(
           instrumentType: contractUnit.instrumentType,
           itemType,
           prompt,
-          stimulus: candidate.stimulus || undefined,
+          stimulus: typeof candidate.stimulus === 'string' && candidate.stimulus.trim() ? candidate.stimulus.trim() : undefined,
           stimulusOrigin: candidate.stimulus ? 'AI_SYNTHETIC' : undefined,
-          stimulusSource: candidate.stimulusSource || undefined,
-          options: Array.isArray(candidate.options)
-            ? candidate.options.map((opt: any, oIdx: number) => ({
-                id: opt.id || undefined,
-                text: typeof opt === 'string' ? opt : opt.text || `Pilihan ${String.fromCharCode(65 + oIdx)}`,
-                isCorrect: typeof opt === 'object' ? opt.isCorrect : undefined,
-              }))
-            : undefined,
+          stimulusSource: typeof candidate.stimulusSource === 'string' && candidate.stimulusSource.trim() ? candidate.stimulusSource.trim() : undefined,
+          options: parsedOptions,
           matchingPremises: Array.isArray(candidate.matchingPremises) ? candidate.matchingPremises : undefined,
           matchingResponses: Array.isArray(candidate.matchingResponses) ? candidate.matchingResponses : undefined,
           categoryStatements: Array.isArray(candidate.categoryStatements) ? candidate.categoryStatements : undefined,
@@ -691,12 +832,11 @@ export function parseAndValidateRawAIResponse(
                 explanation: candidate.proposedAnswer.explanation,
               }
             : undefined,
-          scoringGuideDraft: candidate.scoringGuideDraft
-            ? {
-                instructions: candidate.scoringGuideDraft.instructions,
-                maxScore: candidate.scoringGuideDraft.maxScore,
-              }
-            : undefined,
+          scoringGuideDraft,
+          assessmentIndicator,
+          indicatorSource,
+          materialOrContext,
+          materialSource,
         };
 
         validatedUnits.push(itemUnit);
@@ -706,11 +846,11 @@ export function parseAndValidateRawAIResponse(
 
       case 'TASK': {
         const taskPrompt =
-          typeof candidate.taskPrompt === 'string'
+          typeof candidate.taskPrompt === 'string' && candidate.taskPrompt.trim()
             ? candidate.taskPrompt.trim()
-            : typeof candidate.instructions === 'string'
+            : typeof candidate.instructions === 'string' && candidate.instructions.trim()
             ? candidate.instructions.trim()
-            : typeof candidate.taskTitle === 'string'
+            : typeof candidate.taskTitle === 'string' && candidate.taskTitle.trim()
             ? candidate.taskTitle.trim()
             : '';
 
@@ -724,49 +864,123 @@ export function parseAndValidateRawAIResponse(
           return;
         }
 
+        const taskTitle =
+          typeof candidate.taskTitle === 'string' && candidate.taskTitle.trim()
+            ? candidate.taskTitle.trim()
+            : taskPrompt.length > 40
+            ? `${taskPrompt.slice(0, 40)}...`
+            : taskPrompt;
+
+        const taskInstructions =
+          typeof candidate.instructions === 'string' && candidate.instructions.trim()
+            ? candidate.instructions.trim()
+            : taskPrompt;
+
+        const expectedDeliverable =
+          typeof candidate.expectedDeliverable === 'string' && candidate.expectedDeliverable.trim()
+            ? candidate.expectedDeliverable.trim()
+            : undefined;
+
+        const aspects = Array.isArray(candidate.aspects)
+          ? candidate.aspects
+              .filter(
+                (asp: any) =>
+                  asp &&
+                  typeof asp === 'object' &&
+                  typeof (asp.label || asp.name) === 'string' &&
+                  (asp.label || asp.name).trim()
+              )
+              .map((asp: any) => ({
+                label: (asp.label || asp.name).trim(),
+                description:
+                  typeof asp.description === 'string' && asp.description.trim() ? asp.description.trim() : undefined,
+                weight:
+                  typeof asp.weight === 'number' && Number.isFinite(asp.weight) && asp.weight > 0
+                    ? asp.weight
+                    : undefined,
+              }))
+          : undefined;
+
+        const rubricDraft =
+          candidate.rubricDraft && typeof candidate.rubricDraft === 'object'
+            ? {
+                title:
+                  typeof candidate.rubricDraft.title === 'string' && candidate.rubricDraft.title.trim()
+                    ? candidate.rubricDraft.title.trim()
+                    : undefined,
+                criteria: Array.isArray(candidate.rubricDraft.criteria)
+                  ? candidate.rubricDraft.criteria
+                      .filter(
+                        (c: any) =>
+                          c &&
+                          typeof c === 'object' &&
+                          typeof (c.label || c.name) === 'string' &&
+                          (c.label || c.name).trim()
+                      )
+                      .map((c: any) => ({
+                        label: (c.label || c.name).trim(),
+                        indicator:
+                          typeof c.indicator === 'string' && c.indicator.trim() ? c.indicator.trim() : undefined,
+                        weight:
+                          typeof c.weight === 'number' && Number.isFinite(c.weight) && c.weight > 0
+                            ? c.weight
+                            : undefined,
+                      }))
+                  : [],
+                scale: Array.isArray(candidate.rubricDraft.scale)
+                  ? candidate.rubricDraft.scale
+                      .filter(
+                        (s: any) =>
+                          s &&
+                          typeof s === 'object' &&
+                          typeof s.label === 'string' &&
+                          s.label.trim()
+                      )
+                      .map((s: any, sIdx: number) => ({
+                        label: s.label.trim(),
+                        score: typeof s.score === 'number' && Number.isFinite(s.score) ? s.score : sIdx + 1,
+                        descriptor:
+                          typeof s.descriptor === 'string' && s.descriptor.trim() ? s.descriptor.trim() : undefined,
+                        order: typeof s.order === 'number' && Number.isFinite(s.order) ? s.order : sIdx + 1,
+                      }))
+                  : [],
+              }
+            : undefined;
+
+        const scoringGuideDraft =
+          candidate.scoringGuideDraft && typeof candidate.scoringGuideDraft === 'object'
+            ? {
+                instructions:
+                  typeof candidate.scoringGuideDraft.instructions === 'string' &&
+                  candidate.scoringGuideDraft.instructions.trim()
+                    ? candidate.scoringGuideDraft.instructions.trim()
+                    : undefined,
+                maxScore:
+                  typeof candidate.scoringGuideDraft.maxScore === 'number' &&
+                  Number.isFinite(candidate.scoringGuideDraft.maxScore) &&
+                  candidate.scoringGuideDraft.maxScore > 0
+                    ? candidate.scoringGuideDraft.maxScore
+                    : undefined,
+              }
+            : undefined;
+
         const taskUnit: GeneratedTaskUnit = {
           allocationUnit: 'TASK',
           coverageUnitId: contractUnit.coverageUnitId,
           objectiveRefId: contractUnit.objectiveRefId,
           criterionId: contractUnit.criterionId,
           instrumentType: contractUnit.instrumentType,
-          taskTitle: candidate.taskTitle || 'Tugas Kinerja / Penugasan',
+          taskTitle,
           taskPrompt,
-          instructions: candidate.instructions || taskPrompt,
-          expectedDeliverable: candidate.expectedDeliverable || undefined,
-          aspects: Array.isArray(candidate.aspects)
-            ? candidate.aspects.map((asp: any, aIdx: number) => ({
-                label: asp.label || asp.name || `Aspek Penilaian #${aIdx + 1}`,
-                description: asp.description || undefined,
-                weight: typeof asp.weight === 'number' ? asp.weight : undefined,
-              }))
-            : undefined,
-          rubricDraft: candidate.rubricDraft
-            ? {
-                title: candidate.rubricDraft.title || 'Rubrik Penilaian Tugas',
-                criteria: Array.isArray(candidate.rubricDraft.criteria)
-                  ? candidate.rubricDraft.criteria.map((c: any, cIdx: number) => ({
-                      label: c.label || c.name || `Kriteria #${cIdx + 1}`,
-                      indicator: c.indicator || undefined,
-                      weight: typeof c.weight === 'number' ? c.weight : undefined,
-                    }))
-                  : [],
-                scale: Array.isArray(candidate.rubricDraft.scale)
-                  ? candidate.rubricDraft.scale.map((s: any, sIdx: number) => ({
-                      label: s.label || `Level ${sIdx + 1}`,
-                      score: typeof s.score === 'number' ? s.score : sIdx + 1,
-                      descriptor: s.descriptor || undefined,
-                      order: typeof s.order === 'number' ? s.order : sIdx + 1,
-                    }))
-                  : [],
-              }
-            : undefined,
-          scoringGuideDraft: candidate.scoringGuideDraft
-            ? {
-                instructions: candidate.scoringGuideDraft.instructions,
-                maxScore: candidate.scoringGuideDraft.maxScore,
-              }
-            : undefined,
+          instructions: taskInstructions,
+          expectedDeliverable,
+          aspects: aspects && aspects.length > 0 ? aspects : undefined,
+          rubricDraft: rubricDraft && rubricDraft.criteria.length > 0 ? rubricDraft : undefined,
+          scoringGuideDraft,
+          assessmentIndicator,
+          indicatorSource,
+          materialOrContext,
+          materialSource,
         };
 
         validatedUnits.push(taskUnit);
@@ -775,11 +989,15 @@ export function parseAndValidateRawAIResponse(
       }
 
       case 'EVIDENCE': {
-        const evidenceRequirements = Array.isArray(candidate.evidenceRequirements)
+        const rawReqs = Array.isArray(candidate.evidenceRequirements)
           ? candidate.evidenceRequirements
-          : typeof candidate.instructions === 'string'
-          ? [candidate.instructions]
+          : typeof candidate.instructions === 'string' && candidate.instructions.trim()
+          ? [candidate.instructions.trim()]
           : [];
+
+        const evidenceRequirements = rawReqs
+          .filter((r: any) => typeof r === 'string' && r.trim().length > 0)
+          .map((r: string) => r.trim());
 
         if (evidenceRequirements.length === 0) {
           issues.push({
@@ -791,40 +1009,88 @@ export function parseAndValidateRawAIResponse(
           return;
         }
 
+        const instructions =
+          typeof candidate.instructions === 'string' && candidate.instructions.trim()
+            ? candidate.instructions.trim()
+            : undefined;
+
+        const rubricDraft =
+          candidate.rubricDraft && typeof candidate.rubricDraft === 'object'
+            ? {
+                title:
+                  typeof candidate.rubricDraft.title === 'string' && candidate.rubricDraft.title.trim()
+                    ? candidate.rubricDraft.title.trim()
+                    : undefined,
+                criteria: Array.isArray(candidate.rubricDraft.criteria)
+                  ? candidate.rubricDraft.criteria
+                      .filter(
+                        (c: any) =>
+                          c &&
+                          typeof c === 'object' &&
+                          typeof (c.label || c.name) === 'string' &&
+                          (c.label || c.name).trim()
+                      )
+                      .map((c: any) => ({
+                        label: (c.label || c.name).trim(),
+                        indicator:
+                          typeof c.indicator === 'string' && c.indicator.trim() ? c.indicator.trim() : undefined,
+                        weight:
+                          typeof c.weight === 'number' && Number.isFinite(c.weight) && c.weight > 0
+                            ? c.weight
+                            : undefined,
+                      }))
+                  : [],
+                scale: Array.isArray(candidate.rubricDraft.scale)
+                  ? candidate.rubricDraft.scale
+                      .filter(
+                        (s: any) =>
+                          s &&
+                          typeof s === 'object' &&
+                          typeof s.label === 'string' &&
+                          s.label.trim()
+                      )
+                      .map((s: any, sIdx: number) => ({
+                        label: s.label.trim(),
+                        score: typeof s.score === 'number' && Number.isFinite(s.score) ? s.score : sIdx + 1,
+                        descriptor:
+                          typeof s.descriptor === 'string' && s.descriptor.trim() ? s.descriptor.trim() : undefined,
+                        order: typeof s.order === 'number' && Number.isFinite(s.order) ? s.order : sIdx + 1,
+                      }))
+                  : [],
+              }
+            : undefined;
+
+        const scoringGuideDraft =
+          candidate.scoringGuideDraft && typeof candidate.scoringGuideDraft === 'object'
+            ? {
+                instructions:
+                  typeof candidate.scoringGuideDraft.instructions === 'string' &&
+                  candidate.scoringGuideDraft.instructions.trim()
+                    ? candidate.scoringGuideDraft.instructions.trim()
+                    : undefined,
+                maxScore:
+                  typeof candidate.scoringGuideDraft.maxScore === 'number' &&
+                  Number.isFinite(candidate.scoringGuideDraft.maxScore) &&
+                  candidate.scoringGuideDraft.maxScore > 0
+                    ? candidate.scoringGuideDraft.maxScore
+                    : undefined,
+              }
+            : undefined;
+
         const evidenceUnit: GeneratedEvidenceUnit = {
           allocationUnit: 'EVIDENCE',
           coverageUnitId: contractUnit.coverageUnitId,
           objectiveRefId: contractUnit.objectiveRefId,
           criterionId: contractUnit.criterionId,
           instrumentType: contractUnit.instrumentType,
-          instructions: candidate.instructions || 'Kumpulkan bukti karya sesuai ketentuan berikut:',
+          instructions,
           evidenceRequirements,
-          rubricDraft: candidate.rubricDraft
-            ? {
-                title: candidate.rubricDraft.title || 'Rubrik Penilaian Portofolio',
-                criteria: Array.isArray(candidate.rubricDraft.criteria)
-                  ? candidate.rubricDraft.criteria.map((c: any, cIdx: number) => ({
-                      label: c.label || c.name || `Kriteria Portofolio #${cIdx + 1}`,
-                      indicator: c.indicator || undefined,
-                      weight: typeof c.weight === 'number' ? c.weight : undefined,
-                    }))
-                  : [],
-                scale: Array.isArray(candidate.rubricDraft.scale)
-                  ? candidate.rubricDraft.scale.map((s: any, sIdx: number) => ({
-                      label: s.label || `Level ${sIdx + 1}`,
-                      score: typeof s.score === 'number' ? s.score : sIdx + 1,
-                      descriptor: s.descriptor || undefined,
-                      order: typeof s.order === 'number' ? s.order : sIdx + 1,
-                    }))
-                  : [],
-              }
-            : undefined,
-          scoringGuideDraft: candidate.scoringGuideDraft
-            ? {
-                instructions: candidate.scoringGuideDraft.instructions,
-                maxScore: candidate.scoringGuideDraft.maxScore,
-              }
-            : undefined,
+          rubricDraft: rubricDraft && rubricDraft.criteria.length > 0 ? rubricDraft : undefined,
+          scoringGuideDraft,
+          assessmentIndicator,
+          indicatorSource,
+          materialOrContext,
+          materialSource,
         };
 
         validatedUnits.push(evidenceUnit);
@@ -833,22 +1099,82 @@ export function parseAndValidateRawAIResponse(
       }
 
       case 'OBSERVATION': {
-        const aspects = Array.isArray(candidate.aspects)
-          ? candidate.aspects.map((asp: any, aIdx: number) => ({
-              label: asp.label || asp.name || `Aspek Pengamatan #${aIdx + 1}`,
-              indicator: asp.indicator || undefined,
-            }))
-          : [];
+        const rawAspects = Array.isArray(candidate.aspects) ? candidate.aspects : [];
+        const aspects = rawAspects
+          .filter(
+            (asp: any) =>
+              asp &&
+              typeof asp === 'object' &&
+              typeof (asp.label || asp.name) === 'string' &&
+              (asp.label || asp.name).trim()
+          )
+          .map((asp: any) => ({
+            label: (asp.label || asp.name).trim(),
+            indicator:
+              typeof asp.indicator === 'string' && asp.indicator.trim() ? asp.indicator.trim() : undefined,
+          }));
 
         if (aspects.length === 0) {
           issues.push({
             code: 'EMPTY_OBSERVATION_ASPECTS',
             severity: 'REVIEW',
-            message: `Kandidat OBSERVATION #${idx + 1} tidak memiliki aspek pengamatan.`,
+            message: `Kandidat OBSERVATION #${idx + 1} tidak memiliki aspek pengamatan yang valid.`,
             objectiveRefId: contractUnit.objectiveRefId,
           });
           return;
         }
+
+        const recordingScheme =
+          typeof candidate.recordingScheme === 'string' && candidate.recordingScheme.trim()
+            ? candidate.recordingScheme.trim()
+            : undefined;
+
+        const instructions =
+          typeof candidate.instructions === 'string' && candidate.instructions.trim()
+            ? candidate.instructions.trim()
+            : undefined;
+
+        const rubricDraft =
+          candidate.rubricDraft && typeof candidate.rubricDraft === 'object'
+            ? {
+                title:
+                  typeof candidate.rubricDraft.title === 'string' && candidate.rubricDraft.title.trim()
+                    ? candidate.rubricDraft.title.trim()
+                    : undefined,
+                criteria: Array.isArray(candidate.rubricDraft.criteria)
+                  ? candidate.rubricDraft.criteria
+                      .filter(
+                        (c: any) =>
+                          c &&
+                          typeof c === 'object' &&
+                          typeof (c.label || c.name) === 'string' &&
+                          (c.label || c.name).trim()
+                      )
+                      .map((c: any) => ({
+                        label: (c.label || c.name).trim(),
+                        indicator:
+                          typeof c.indicator === 'string' && c.indicator.trim() ? c.indicator.trim() : undefined,
+                      }))
+                  : [],
+                scale: Array.isArray(candidate.rubricDraft.scale)
+                  ? candidate.rubricDraft.scale
+                      .filter(
+                        (s: any) =>
+                          s &&
+                          typeof s === 'object' &&
+                          typeof s.label === 'string' &&
+                          s.label.trim()
+                      )
+                      .map((s: any, sIdx: number) => ({
+                        label: s.label.trim(),
+                        score: typeof s.score === 'number' && Number.isFinite(s.score) ? s.score : sIdx + 1,
+                        descriptor:
+                          typeof s.descriptor === 'string' && s.descriptor.trim() ? s.descriptor.trim() : undefined,
+                        order: typeof s.order === 'number' && Number.isFinite(s.order) ? s.order : sIdx + 1,
+                      }))
+                  : [],
+              }
+            : undefined;
 
         const observationUnit: GeneratedObservationUnit = {
           allocationUnit: 'OBSERVATION',
@@ -856,28 +1182,14 @@ export function parseAndValidateRawAIResponse(
           objectiveRefId: contractUnit.objectiveRefId,
           criterionId: contractUnit.criterionId,
           instrumentType: contractUnit.instrumentType,
-          recordingScheme: candidate.recordingScheme || 'Skala Sikap / Lembar Pengamatan',
-          instructions: candidate.instructions || 'Amati dan catat ketercapaian aspek perilaku berikut:',
+          recordingScheme,
+          instructions,
           aspects,
-          rubricDraft: candidate.rubricDraft
-            ? {
-                title: candidate.rubricDraft.title || 'Rubrik Pengamatan Observasi',
-                criteria: Array.isArray(candidate.rubricDraft.criteria)
-                  ? candidate.rubricDraft.criteria.map((c: any, cIdx: number) => ({
-                      label: c.label || c.name || `Aspek #${cIdx + 1}`,
-                      indicator: c.indicator || undefined,
-                    }))
-                  : [],
-                scale: Array.isArray(candidate.rubricDraft.scale)
-                  ? candidate.rubricDraft.scale.map((s: any, sIdx: number) => ({
-                      label: s.label || `Level ${sIdx + 1}`,
-                      score: typeof s.score === 'number' ? s.score : sIdx + 1,
-                      descriptor: s.descriptor || undefined,
-                      order: typeof s.order === 'number' ? s.order : sIdx + 1,
-                    }))
-                  : [],
-              }
-            : undefined,
+          rubricDraft: rubricDraft && rubricDraft.criteria.length > 0 ? rubricDraft : undefined,
+          assessmentIndicator,
+          indicatorSource,
+          materialOrContext,
+          materialSource,
         };
 
         validatedUnits.push(observationUnit);
@@ -999,7 +1311,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           }
 
           // Scoring Guide
-          if (itemUnit.scoringGuideDraft || itemUnit.itemType === 'ESSAY') {
+          if (itemUnit.scoringGuideDraft) {
             const sgId = createDeterministicScoringGuideId(instId, itemId);
             scoringGuides.push({
               id: sgId,
@@ -1007,8 +1319,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               instrumentId: instId,
               instrumentItemId: itemId,
               guideType: itemUnit.itemType === 'ESSAY' ? 'ESSAY' : 'OBJECTIVE',
-              instructions: itemUnit.scoringGuideDraft?.instructions || 'Beri skor sesuai kriteria jawaban benar.',
-              maxScore: itemUnit.scoringGuideDraft?.maxScore || (itemUnit.itemType === 'ESSAY' ? 10 : 1),
+              instructions: itemUnit.scoringGuideDraft.instructions,
+              maxScore: itemUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1017,7 +1329,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'WRITTEN_TEST',
           title: 'Instrumen Tes Tertulis (Draf AI)',
-          instructions: 'Pilihlah atau jawablah pertanyaan-pertanyaan berikut dengan tepat.',
+          instructions: undefined,
           items: writtenItems,
         });
         break;
@@ -1047,7 +1359,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'ORAL_TEST',
           title: 'Instrumen Tes Lisan (Draf AI)',
-          instructions: 'Sampaikan pertanyaan berikut secara lisan kepada murid.',
+          instructions: undefined,
           items: oralItems,
         });
         break;
@@ -1069,7 +1381,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
           if (!combinedTask) {
-            combinedTask = taskUnit.taskPrompt || taskUnit.taskTitle;
+            combinedTask = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
           }
 
           if (taskUnit.aspects && taskUnit.aspects.length > 0) {
@@ -1108,7 +1420,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
 
             rubrics.push({
               id: rubricId,
-              title: taskUnit.rubricDraft.title || 'Rubrik Penilaian Kinerja (Draf AI)',
+              title: taskUnit.rubricDraft.title || `Rubrik ${taskUnit.taskTitle}`,
               instrumentId: instId,
               criteria: critList,
               scale: scaleList,
@@ -1124,8 +1436,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               title: 'Pedoman Penilaian Kinerja',
               instrumentId: instId,
               guideType: 'RUBRIC_BASED',
-              instructions: taskUnit.scoringGuideDraft.instructions || 'Gunakan rubrik penilaian untuk menentukan skor akhir.',
-              maxScore: taskUnit.scoringGuideDraft.maxScore || 100,
+              instructions: taskUnit.scoringGuideDraft.instructions,
+              maxScore: taskUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1134,8 +1446,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PERFORMANCE',
           title: 'Instrumen Penilaian Kinerja / Praktik (Draf AI)',
-          task: combinedTask || 'Laksanakan tugas unjuk kerja berikut:',
-          instructions: 'Lakukan pengamatan dan penilaian terhadap proses dan hasil kinerja murid.',
+          task: combinedTask,
+          instructions: undefined,
           aspects: aspects.length > 0 ? aspects : undefined,
           rubricId,
           scoringGuideId,
@@ -1146,6 +1458,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'OBSERVATION': {
         const aspects: ObservationAspect[] = [];
         let rubricId: string | undefined;
+        let recordingScheme: string | undefined;
+        let obsInstructions: string | undefined;
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'OBSERVATION') return;
@@ -1155,6 +1469,13 @@ export function mapGeneratedUnitsToAssessmentPackage(
           const covItems = coverageToItemIds.get(u.coverageUnitId) || [];
           covItems.push(aspId);
           coverageToItemIds.set(u.coverageUnitId, covItems);
+
+          if (!recordingScheme && obsUnit.recordingScheme) {
+            recordingScheme = obsUnit.recordingScheme;
+          }
+          if (!obsInstructions && obsUnit.instructions) {
+            obsInstructions = obsUnit.instructions;
+          }
 
           obsUnit.aspects.forEach((asp, aIdx) => {
             aspects.push({
@@ -1181,7 +1502,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
 
             rubrics.push({
               id: rubricId,
-              title: obsUnit.rubricDraft.title || 'Rubrik Lembar Observasi (Draf AI)',
+              title: obsUnit.rubricDraft.title || 'Rubrik Lembar Observasi',
               instrumentId: instId,
               criteria: critList,
               scale: scaleList,
@@ -1194,8 +1515,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'OBSERVATION',
           title: 'Instrumen Lembar Pengamatan / Observasi (Draf AI)',
-          instructions: 'Catat ketercapaian aspek perilaku murid selama proses pembelajaran.',
-          recordingScheme: 'Skala Penilaian / Checklist Pengamatan',
+          instructions: obsInstructions,
+          recordingScheme,
           aspects,
         });
         break;
@@ -1205,6 +1526,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
         const evidenceReqs: string[] = [];
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
+        let portfolioInstructions: string | undefined;
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'EVIDENCE') return;
@@ -1215,6 +1537,10 @@ export function mapGeneratedUnitsToAssessmentPackage(
           covItems.push(reqId);
           coverageToItemIds.set(u.coverageUnitId, covItems);
 
+          if (!portfolioInstructions && evUnit.instructions) {
+            portfolioInstructions = evUnit.instructions;
+          }
+
           evUnit.evidenceRequirements.forEach((req) => {
             if (!evidenceReqs.includes(req)) evidenceReqs.push(req);
           });
@@ -1223,7 +1549,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
             rubricId = createDeterministicRubricId(instId, 1);
             rubrics.push({
               id: rubricId,
-              title: evUnit.rubricDraft.title || 'Rubrik Penilaian Portofolio (Draf AI)',
+              title: evUnit.rubricDraft.title || 'Rubrik Penilaian Portofolio',
               instrumentId: instId,
               criteria: (evUnit.rubricDraft.criteria || []).map((c, cIdx) => ({
                 id: `crit-${rubricId}-${cIdx + 1}`,
@@ -1249,8 +1575,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               title: 'Pedoman Penilaian Portofolio',
               instrumentId: instId,
               guideType: 'RUBRIC_BASED',
-              instructions: evUnit.scoringGuideDraft.instructions || 'Gunakan rubrik untuk menilai kelengkapan dan mutu bukti portofolio.',
-              maxScore: evUnit.scoringGuideDraft.maxScore || 100,
+              instructions: evUnit.scoringGuideDraft.instructions,
+              maxScore: evUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1259,7 +1585,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PORTFOLIO',
           title: 'Instrumen Asesmen Portofolio (Draf AI)',
-          instructions: 'Kumpulkan dan susun bukti-bukti hasil pembelajaran berikut:',
+          instructions: portfolioInstructions || '',
           evidenceRequirements: evidenceReqs,
           rubricId,
           scoringGuideId,
@@ -1270,6 +1596,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'ASSIGNMENT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
+        let assignmentInstructions = '';
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1279,6 +1606,10 @@ export function mapGeneratedUnitsToAssessmentPackage(
           const covItems = coverageToItemIds.get(u.coverageUnitId) || [];
           covItems.push(aspId);
           coverageToItemIds.set(u.coverageUnitId, covItems);
+
+          if (!assignmentInstructions) {
+            assignmentInstructions = taskUnit.instructions || taskUnit.taskPrompt || taskUnit.taskTitle || '';
+          }
 
           if (taskUnit.rubricDraft && !rubricId) {
             rubricId = createDeterministicRubricId(instId, 1);
@@ -1309,8 +1640,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               title: 'Pedoman Penilaian Penugasan',
               instrumentId: instId,
               guideType: 'RUBRIC_BASED',
-              instructions: taskUnit.scoringGuideDraft.instructions || 'Periksa kelengkapan dan kualitas laporan penugasan.',
-              maxScore: taskUnit.scoringGuideDraft.maxScore || 100,
+              instructions: taskUnit.scoringGuideDraft.instructions,
+              maxScore: taskUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1319,7 +1650,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'ASSIGNMENT',
           title: 'Instrumen Penugasan (Draf AI)',
-          instructions: 'Kerjakan penugasan terstruktur sesuai petunjuk yang diberikan.',
+          instructions: assignmentInstructions,
           rubricId,
           scoringGuideId,
         });
@@ -1329,6 +1660,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'PROJECT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
+        let projectBrief = '';
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1338,6 +1670,10 @@ export function mapGeneratedUnitsToAssessmentPackage(
           const covItems = coverageToItemIds.get(u.coverageUnitId) || [];
           covItems.push(aspId);
           coverageToItemIds.set(u.coverageUnitId, covItems);
+
+          if (!projectBrief) {
+            projectBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
+          }
 
           if (taskUnit.rubricDraft && !rubricId) {
             rubricId = createDeterministicRubricId(instId, 1);
@@ -1368,8 +1704,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               title: 'Pedoman Penilaian Proyek',
               instrumentId: instId,
               guideType: 'RUBRIC_BASED',
-              instructions: taskUnit.scoringGuideDraft.instructions || 'Evaluasi tahapan perencanaan, pelaksanaan, dan pelaporan proyek.',
-              maxScore: taskUnit.scoringGuideDraft.maxScore || 100,
+              instructions: taskUnit.scoringGuideDraft.instructions,
+              maxScore: taskUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1378,7 +1714,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PROJECT',
           title: 'Instrumen Penilaian Proyek (Draf AI)',
-          projectBrief: 'Rancang dan laksanakan proyek investigatif/kolaboratif sesuai tema pembelajaran.',
+          projectBrief: projectBrief,
           rubricId,
           scoringGuideId,
         });
@@ -1388,6 +1724,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
       case 'PRODUCT': {
         let rubricId: string | undefined;
         let scoringGuideId: string | undefined;
+        let productBrief = '';
 
         units.forEach((u, uIdx) => {
           if (u.allocationUnit !== 'TASK') return;
@@ -1397,6 +1734,10 @@ export function mapGeneratedUnitsToAssessmentPackage(
           const covItems = coverageToItemIds.get(u.coverageUnitId) || [];
           covItems.push(aspId);
           coverageToItemIds.set(u.coverageUnitId, covItems);
+
+          if (!productBrief) {
+            productBrief = taskUnit.taskPrompt || taskUnit.instructions || taskUnit.taskTitle || '';
+          }
 
           if (taskUnit.rubricDraft && !rubricId) {
             rubricId = createDeterministicRubricId(instId, 1);
@@ -1427,8 +1768,8 @@ export function mapGeneratedUnitsToAssessmentPackage(
               title: 'Pedoman Penilaian Produk',
               instrumentId: instId,
               guideType: 'RUBRIC_BASED',
-              instructions: taskUnit.scoringGuideDraft.instructions || 'Nilai kualitas rancangan dan produk akhir yang dibuat murid.',
-              maxScore: taskUnit.scoringGuideDraft.maxScore || 100,
+              instructions: taskUnit.scoringGuideDraft.instructions,
+              maxScore: taskUnit.scoringGuideDraft.maxScore,
             });
           }
         });
@@ -1437,7 +1778,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
           id: instId,
           type: 'PRODUCT',
           title: 'Instrumen Penilaian Produk (Draf AI)',
-          productBrief: 'Ciptakan karya/produk nyata yang mendemonstrasikan penguasaan kompetensi.',
+          productBrief: productBrief,
           rubricId,
           scoringGuideId,
         });
@@ -1457,11 +1798,11 @@ export function mapGeneratedUnitsToAssessmentPackage(
       criterionId: cu.criterionId,
       assessmentIndicator:
         cu.assessmentIndicator ||
-        (generatedForUnit[0] as any)?.assessmentIndicator ||
-        'Indikator Asesmen (Draf AI)',
+        generatedForUnit[0]?.assessmentIndicator ||
+        undefined,
       materialOrContext:
         cu.materialOrContext ||
-        (generatedForUnit[0] as any)?.materialOrContext ||
+        generatedForUnit[0]?.materialOrContext ||
         undefined,
       instrumentType: cu.instrumentType,
       instrumentItemIds: itemIds,
@@ -1479,7 +1820,7 @@ export function mapGeneratedUnitsToAssessmentPackage(
   const pkg: AssessmentPackage = {
     id: pkgId,
     assessmentPlanId: contract.assessmentPlanId,
-    academicSettingId: spec?.assessmentPlanId ? `setting-${spec.assessmentPlanId}` : 'setting-default',
+    academicSettingId: contract.academicSettingId,
     title: `Perangkat Asesmen - ${contract.subjectProfile.subjectLabel || contract.subjectProfile.subjectKey} (Draf AI)`,
     blueprintItems,
     instruments,

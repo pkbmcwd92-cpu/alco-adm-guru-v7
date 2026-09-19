@@ -534,6 +534,7 @@ export function resolveAssessmentGenerationPlan(
   }
 
   return {
+    academicSettingId: spec.academicSettingId,
     generationSpec: spec,
     constraints: resolvedConstraints,
     coverageUnits,

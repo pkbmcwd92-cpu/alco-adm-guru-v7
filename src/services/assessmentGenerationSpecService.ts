@@ -408,7 +408,10 @@ export function resolveAssessmentGenerationSpec(
     resolvedCurriculumType = rawCurriculumType;
   }
 
+  const settingId = academicSetting?.id || params.assessmentPlan?.academicSettingId;
+
   const curriculumContext: ResolvedAssessmentCurriculumContext = {
+    academicSettingId: settingId,
     curriculumType: resolvedCurriculumType,
     rawCurriculumName: academicSetting?.curriculum || '',
     grade: resolvedGradeNumber,
@@ -419,6 +422,7 @@ export function resolveAssessmentGenerationSpec(
   return {
     assessmentPlanId: planId,
     assessmentPackageId: packageId,
+    academicSettingId: settingId,
     curriculumContext,
     objectives: resolvedObjectives,
     criteria: resolvedCriteria,

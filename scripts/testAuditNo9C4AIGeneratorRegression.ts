@@ -16,6 +16,7 @@ import { resolveAssessmentGenerationPlan } from '../src/services/assessmentGener
 import {
   generateAssessmentPackageDraft,
   validatePreGenerationGuards,
+  resolveAuthoritativeAcademicSettingId,
   buildGenerationContract,
   buildGenerationPrompts,
   parseAndValidateRawAIResponse,
@@ -687,6 +688,250 @@ async function runRegressionSuite() {
 
   assert(beforePlanJson === afterPlanJson, 'Case 57: GenerationPlan remains completely unmutated');
   assert(beforeSpecJson === afterSpecJson, 'Case 58: GenerationSpec remains completely unmutated');
+
+  // ----------------------------------------------------
+  // SECTION 8: HARDENING (FAIL-CLOSED & NO FABRICATED DATA)
+  // ----------------------------------------------------
+  console.log('\n--- SECTION 8: HARDENING & FAIL-CLOSED NO FABRICATED DATA ---');
+
+  // Case BB: Indicator precedence - Teacher indicator preserved
+  const planWithTeacherInd: AssessmentGenerationPlan = {
+    ...validPlan,
+    coverageUnits: [
+      {
+        ...validPlan.coverageUnits[0],
+        assessmentIndicator: 'Indikator Otentik Buatan Guru',
+      },
+    ],
+  };
+  const contractBB = buildGenerationContract(planWithTeacherInd);
+  assert(contractBB.units[0].assessmentIndicator === 'Indikator Otentik Buatan Guru', 'Case BB: Teacher indicator preserved in contract');
+  assert(contractBB.units[0].indicatorSource === 'TEACHER', 'Case BB: Indicator source marked TEACHER');
+
+  // Case BC: Indicator precedence - AI generated indicator preserved when teacher indicator missing
+  const unitBC = contract.units[0];
+  const aiIndJson = JSON.stringify([
+    {
+      coverageUnitId: unitBC.coverageUnitId,
+      objectiveRefId: unitBC.objectiveRefId,
+      criterionId: unitBC.criterionId,
+      instrumentType: unitBC.instrumentType,
+      allocationUnit: unitBC.allocationUnit,
+      assessmentIndicator: 'Indikator Hasil AI',
+      itemType: 'MULTIPLE_CHOICE',
+      prompt: 'Soal dengan indikator AI',
+      options: [{ text: 'A' }, { text: 'B' }],
+    },
+  ]);
+  const parseResBC = parseAndValidateRawAIResponse(aiIndJson, contract);
+  assert(parseResBC.validatedUnits[0].assessmentIndicator === 'Indikator Hasil AI', 'Case BC: AI indicator preserved when teacher indicator absent');
+
+  // Case BD: Indicator fail-closed - Blueprint item indicator is undefined when neither provided
+  const providerBD = new MockAIProvider(() =>
+    JSON.stringify([
+      {
+        coverageUnitId: unitBC.coverageUnitId,
+        objectiveRefId: unitBC.objectiveRefId,
+        criterionId: unitBC.criterionId,
+        instrumentType: unitBC.instrumentType,
+        allocationUnit: unitBC.allocationUnit,
+        itemType: 'MULTIPLE_CHOICE',
+        prompt: 'Soal tanpa indikator sama sekali',
+        options: [{ text: 'A' }, { text: 'B' }],
+      },
+    ])
+  );
+  const resultBD = await generateAssessmentPackageDraft({
+    generationPlan: validPlan,
+    provider: providerBD,
+  });
+  const pkgBD = resultBD.generatedPackage!;
+  assert(pkgBD.blueprintItems[0].assessmentIndicator === undefined, 'Case BD: Blueprint indicator is undefined (NO FABRICATED STRING)');
+
+  // Case BE: AcademicSettingId resolution propagates canonical ID
+  const resolvedSettingId = resolveAuthoritativeAcademicSettingId({ academicSettingId: 'setting-sd-4' });
+  assert(resolvedSettingId === 'setting-sd-4', 'Case BE: Canonical academicSettingId resolved accurately');
+
+  // Case BF: Unresolved academicSettingId fails pre-generation guard
+  const planNoSetting: AssessmentGenerationPlan = {
+    ...validPlan,
+    academicSettingId: undefined,
+    generationSpec: {
+      ...spec,
+      academicSettingId: undefined,
+      curriculumContext: { ...spec.curriculumContext, academicSettingId: '' },
+    },
+  };
+  const guardResBF = validatePreGenerationGuards({ generationPlan: planNoSetting });
+  assert(guardResBF.valid === false, 'Case BF: Unresolved academicSettingId fails pre-generation guard');
+  assert(guardResBF.issues.some((i) => i.code === 'ACADEMIC_SETTING_ID_UNRESOLVED'), 'Case BF: Returns ACADEMIC_SETTING_ID_UNRESOLVED');
+
+  // Case BG: No synthetic setting fallback in generated package
+  assert(pkg.academicSettingId === 'setting-sd-4', 'Case BG: Package uses exact canonical academicSettingId without setting-default fallback');
+
+  // Case BH: Option text validation - Empty/whitespace option text rejected
+  const emptyOptJson = JSON.stringify([
+    {
+      coverageUnitId: unitBC.coverageUnitId,
+      objectiveRefId: unitBC.objectiveRefId,
+      criterionId: unitBC.criterionId,
+      instrumentType: unitBC.instrumentType,
+      allocationUnit: unitBC.allocationUnit,
+      itemType: 'MULTIPLE_CHOICE',
+      prompt: 'Soal opsi kosong',
+      options: [{ text: 'Opsi Valid' }, { text: '   ' }],
+    },
+  ]);
+  const parseResBH = parseAndValidateRawAIResponse(emptyOptJson, contract);
+  assert(parseResBH.validatedUnits.length === 0, 'Case BH: Candidate with empty option text rejected');
+  assert(parseResBH.issues.some((i) => i.code === 'INVALID_OPTION_TEXT'), 'Case BH: Issues contain INVALID_OPTION_TEXT');
+
+  // Case BI: Option structure validation - Non-string / non-object option entries rejected
+  const nonObjOptJson = JSON.stringify([
+    {
+      coverageUnitId: unitBC.coverageUnitId,
+      objectiveRefId: unitBC.objectiveRefId,
+      criterionId: unitBC.criterionId,
+      instrumentType: unitBC.instrumentType,
+      allocationUnit: unitBC.allocationUnit,
+      itemType: 'MULTIPLE_CHOICE',
+      prompt: 'Soal opsi number',
+      options: [123, 456],
+    },
+  ]);
+  const parseResBI = parseAndValidateRawAIResponse(nonObjOptJson, contract);
+  assert(parseResBI.validatedUnits.length === 0, 'Case BI: Candidate with numeric options rejected');
+  assert(parseResBI.issues.some((i) => i.code === 'INVALID_OPTION_TEXT'), 'Case BI: Issues contain INVALID_OPTION_TEXT');
+
+  // Setup Plan for PROJECT
+  const mockPlanProj: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-proj-1',
+    instruments: [{ id: 'inst-proj-ref', type: 'PROJECT', label: 'Penilaian Proyek' }],
+  };
+  const specProj = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanProj,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planProj = resolveAssessmentGenerationPlan({ generationSpec: specProj });
+  const projContract = buildGenerationContract(planProj);
+
+  // Case BJ: Project brief uses task content directly without fallback string
+  const projProvider = new MockAIProvider(() =>
+    JSON.stringify([
+      {
+        coverageUnitId: projContract.units[0].coverageUnitId,
+        objectiveRefId: projContract.units[0].objectiveRefId,
+        criterionId: projContract.units[0].criterionId,
+        instrumentType: 'PROJECT',
+        allocationUnit: 'TASK',
+        taskTitle: 'Proyek Daur Ulang',
+        taskPrompt: 'Buatlah kerajinan dari bahan daur ulang.',
+      },
+    ])
+  );
+  const projResult = await generateAssessmentPackageDraft({
+    generationPlan: planProj,
+    provider: projProvider,
+  });
+  const projInst = projResult.generatedPackage?.instruments[0] as any;
+  assert(projInst?.projectBrief === 'Buatlah kerajinan dari bahan daur ulang.', 'Case BJ: Project brief derived directly from taskPrompt without fallback string');
+
+  // Setup Plan for PRODUCT
+  const mockPlanProd: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-prod-1',
+    instruments: [{ id: 'inst-prod-ref', type: 'PRODUCT', label: 'Penilaian Produk' }],
+  };
+  const specProd = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanProd,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planProd = resolveAssessmentGenerationPlan({ generationSpec: specProd });
+  const prodContract = buildGenerationContract(planProd);
+
+  // Case BK: Product brief uses task content directly without fallback string
+  const prodProvider = new MockAIProvider(() =>
+    JSON.stringify([
+      {
+        coverageUnitId: prodContract.units[0].coverageUnitId,
+        objectiveRefId: prodContract.units[0].objectiveRefId,
+        criterionId: prodContract.units[0].criterionId,
+        instrumentType: 'PRODUCT',
+        allocationUnit: 'TASK',
+        taskTitle: 'Produk Poster',
+        instructions: 'Buatlah poster infografis pecahan.',
+      },
+    ])
+  );
+  const prodResult = await generateAssessmentPackageDraft({
+    generationPlan: planProd,
+    provider: prodProvider,
+  });
+  const prodInst = prodResult.generatedPackage?.instruments[0] as any;
+  assert(prodInst?.productBrief === 'Buatlah poster infografis pecahan.', 'Case BK: Product brief derived directly from instructions without fallback string');
+
+  // Setup Plan for ASSIGNMENT
+  const mockPlanAssign: AssessmentPlan = {
+    ...mockPlanMatSiap,
+    id: 'plan-assign-1',
+    instruments: [{ id: 'inst-assign-ref', type: 'ASSIGNMENT', label: 'Penugasan Terstruktur' }],
+  };
+  const specAssign = resolveAssessmentGenerationSpec({
+    academicSetting: mockAcademicSettingSD4,
+    assessmentPlan: mockPlanAssign,
+    tp: mockTPMat,
+    assessmentCriteria: mockCriteriaMat,
+  });
+  const planAssign = resolveAssessmentGenerationPlan({ generationSpec: specAssign });
+  const assignContract = buildGenerationContract(planAssign);
+
+  // Case BL & BM: Scoring guide maxScore and instructions preserved without fallbacks
+  const taskNoScoringFallbackProvider = new MockAIProvider(() =>
+    JSON.stringify([
+      {
+        coverageUnitId: assignContract.units[0].coverageUnitId,
+        objectiveRefId: assignContract.units[0].objectiveRefId,
+        criterionId: assignContract.units[0].criterionId,
+        instrumentType: 'ASSIGNMENT',
+        allocationUnit: 'TASK',
+        taskTitle: 'Penugasan Mandiri',
+        scoringGuideDraft: {
+          instructions: undefined,
+          maxScore: undefined,
+        },
+      },
+    ])
+  );
+  const taskNoScoringResult = await generateAssessmentPackageDraft({
+    generationPlan: planAssign,
+    provider: taskNoScoringFallbackProvider,
+  });
+  const scoringGuideBL = taskNoScoringResult.generatedPackage?.scoringGuides[0];
+  assert(scoringGuideBL?.maxScore === undefined, 'Case BL: Scoring guide maxScore is undefined when not generated (NO FALLBACK 100)');
+  assert(scoringGuideBL?.instructions === undefined, 'Case BM: Scoring guide instructions are undefined when not generated (NO FALLBACK TEXT)');
+
+  // Case BN-BQ: Instrument instructions undefined when not explicitly provided
+  assert(writtenInst.instructions === undefined, 'Case BN: Written test instructions undefined');
+  assert(perfInst.instructions === undefined, 'Case BP: Performance instructions undefined');
+  assert(obsInst.instructions === 'Amati keaktifan murid saat diskusi kelompok.', 'Case BQ: Observation instructions preserved when provided by AI');
+
+  // Case BR: Assignment instructions derived directly from task
+  const assignInst = taskNoScoringResult.generatedPackage?.instruments[0] as any;
+  assert(assignInst.instructions === 'Penugasan Mandiri', 'Case BR: Assignment instructions derived directly from taskTitle when prompt/instructions absent');
+
+  // Case BS & BT: Provenance tracking for indicators and materials
+  assert(contractBB.units[0].indicatorSource === 'TEACHER', 'Case BS: Teacher indicator source tracked');
+  assert(contract.units[0].indicatorSource === 'AI_DRAFT', 'Case BS: AI draft indicator source tracked');
+  assert(contract.units[0].materialSource === 'AI_SYNTHETIC', 'Case BT: Material source tracked as AI_SYNTHETIC when empty');
+
+  // Case BU: Package metadata provenance
+  assert(pkg.provenance?.generatedBy === 'AI', 'Case BU: Package generatedBy provenance is strictly AI');
+  assert(pkg.provenance?.generatedAt !== undefined, 'Case BU: Package generatedAt timestamp exists');
 
   // ----------------------------------------------------
   // SUMMARY

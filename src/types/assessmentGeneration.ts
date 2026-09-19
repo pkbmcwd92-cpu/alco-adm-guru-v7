@@ -166,6 +166,7 @@ export interface ResolvedAssessmentCriterion {
 }
 
 export interface ResolvedAssessmentCurriculumContext {
+  academicSettingId?: string;
   curriculumType?: 'KURIKULUM_MERDEKA' | 'K13';
   rawCurriculumName?: string;
   grade?: number;
@@ -187,6 +188,7 @@ export interface AssessmentSourceContext {
 export interface AssessmentGenerationSpec {
   assessmentPlanId: string;
   assessmentPackageId: string;
+  academicSettingId?: string;
 
   curriculumContext: ResolvedAssessmentCurriculumContext;
   objectives: ResolvedAssessmentObjective[];
@@ -261,6 +263,7 @@ export interface AssessmentCoverageUnit {
 }
 
 export interface AssessmentGenerationPlan {
+  academicSettingId?: string;
   generationSpec?: AssessmentGenerationSpec;
 
   constraints: AssessmentGenerationConstraints;
@@ -336,6 +339,7 @@ export interface AssessmentGenerationContractUnit {
 export interface AssessmentGenerationContract {
   assessmentPlanId: string;
   assessmentPackageId: string;
+  academicSettingId: string;
   curriculumContext: ResolvedAssessmentCurriculumContext;
   gradeCalibration?: AssessmentGradeCalibrationProfile;
   subjectProfile: SubjectAssessmentProfile;
@@ -360,12 +364,20 @@ export interface AssessmentAIGenerationProvider {
 }
 
 // Intermediate Typed Draft Structures
-export interface GeneratedItemUnit {
-  allocationUnit: 'ITEM';
+export interface GeneratedAssessmentUnitBase {
   coverageUnitId: string;
   objectiveRefId: string;
   criterionId?: string;
   instrumentType: AssessmentInstrumentType;
+  allocationUnit: AssessmentAllocationUnit;
+  assessmentIndicator?: string;
+  indicatorSource?: AssessmentGeneratedContentSource;
+  materialOrContext?: string;
+  materialSource?: AssessmentGeneratedContentSource;
+}
+
+export interface GeneratedItemUnit extends GeneratedAssessmentUnitBase {
+  allocationUnit: 'ITEM';
   itemType:
     | 'MULTIPLE_CHOICE'
     | 'MULTIPLE_SELECT'
@@ -403,12 +415,8 @@ export interface GeneratedItemUnit {
   };
 }
 
-export interface GeneratedTaskUnit {
+export interface GeneratedTaskUnit extends GeneratedAssessmentUnitBase {
   allocationUnit: 'TASK';
-  coverageUnitId: string;
-  objectiveRefId: string;
-  criterionId?: string;
-  instrumentType: AssessmentInstrumentType;
   taskTitle: string;
   taskPrompt: string;
   instructions?: string;
@@ -425,12 +433,8 @@ export interface GeneratedTaskUnit {
   };
 }
 
-export interface GeneratedEvidenceUnit {
+export interface GeneratedEvidenceUnit extends GeneratedAssessmentUnitBase {
   allocationUnit: 'EVIDENCE';
-  coverageUnitId: string;
-  objectiveRefId: string;
-  criterionId?: string;
-  instrumentType: AssessmentInstrumentType;
   instructions: string;
   evidenceRequirements: string[];
   rubricDraft?: {
@@ -444,12 +448,8 @@ export interface GeneratedEvidenceUnit {
   };
 }
 
-export interface GeneratedObservationUnit {
+export interface GeneratedObservationUnit extends GeneratedAssessmentUnitBase {
   allocationUnit: 'OBSERVATION';
-  coverageUnitId: string;
-  objectiveRefId: string;
-  criterionId?: string;
-  instrumentType: AssessmentInstrumentType;
   recordingScheme?: string;
   instructions?: string;
   aspects: { label: string; indicator?: string }[];
@@ -469,6 +469,7 @@ export type GeneratedAssessmentUnit =
 // 9C.4 Input and Result Contracts
 export interface GenerateAssessmentPackageInput {
   generationPlan: AssessmentGenerationPlan;
+  academicSettingId?: string;
   teacherContext?: AssessmentTeacherContext;
   sourceMaterials?: AssessmentGenerationSource[];
   existingPackage?: import('./index').AssessmentPackage;
