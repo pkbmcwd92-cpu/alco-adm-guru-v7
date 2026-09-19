@@ -804,6 +804,343 @@ async function runRegressionSuite() {
   }
   assert(audit9c2Passed, 'Case BB: Audit 9C.2 regression tests remain 100% green without regression');
 
+  // ==========================================
+  // CASE BC: Unknown instrument -> instrumentType undefined, allocationUnit undefined, recommendedCount undefined, BLOCKED
+  // ==========================================
+  const specUnknownInstHarden: AssessmentGenerationSpec = {
+    ...baseSpecResolved,
+    plannedInstrumentTypes: ['UNKNOWN_TYPE_XYZ' as any],
+    resolution: { status: 'RESOLVED', issues: [] },
+  };
+  const planBC = resolveAssessmentGenerationPlan({ generationSpec: specUnknownInstHarden });
+  assert(
+    planBC.coverageUnits.every(
+      (u) =>
+        u.instrumentType === undefined &&
+        u.allocationUnit === undefined &&
+        u.recommendedCount === undefined &&
+        u.status === 'BLOCKED'
+    ),
+    'Case BC: Unknown instrument has instrumentType=undefined, allocationUnit=undefined, recommendedCount=undefined, status=BLOCKED'
+  );
+
+  // ==========================================
+  // CASE BD: Ambiguous instrument -> instrumentType undefined, allocationUnit undefined, recommendedCount undefined, NEEDS_REVIEW
+  // ==========================================
+  const planBD = resolveAssessmentGenerationPlan({ generationSpec: specAmbiguousInstruments });
+  assert(
+    planBD.coverageUnits.every(
+      (u) =>
+        u.instrumentType === undefined &&
+        u.allocationUnit === undefined &&
+        u.recommendedCount === undefined &&
+        u.status === 'NEEDS_REVIEW'
+    ),
+    'Case BD: Ambiguous instrument has instrumentType=undefined, allocationUnit=undefined, recommendedCount=undefined, status=NEEDS_REVIEW'
+  );
+
+  // ==========================================
+  // CASE BE: mapInstrumentToAllocationUnit helper fails-closed (returns undefined on missing or unknown)
+  // ==========================================
+  assert(
+    mapInstrumentToAllocationUnit(undefined) === undefined &&
+      mapInstrumentToAllocationUnit('UNKNOWN_XYZ' as any) === undefined,
+    'Case BE: mapInstrumentToAllocationUnit returns undefined on undefined or unknown input'
+  );
+
+  // ==========================================
+  // CASE BF: Coverage unit with undefined allocation unit does NOT have PROV_MINIMUM_COVERAGE_ALLOCATION
+  // ==========================================
+  assert(
+    planBC.coverageUnits.every(
+      (u) => !u.provenance.some((p) => p.id === 'APP-DEFAULT-MINIMUM-COVERAGE')
+    ),
+    'Case BF: Coverage unit with undefined allocation unit does NOT contain minimum coverage allocation provenance'
+  );
+
+  // ==========================================
+  // CASE BG: allocationSummary accurately classifies ITEM, TASK, EVIDENCE, OBSERVATION, unresolved
+  // ==========================================
+  assert(
+    planBC.summary.allocationSummary.unresolvedCount === 2 &&
+      planBC.summary.allocationSummary.itemCount === 0 &&
+      planBC.summary.allocationSummary.taskCount === 0,
+    'Case BG: allocationSummary accurately tracks unresolved allocation units'
+  );
+
+  // ==========================================
+  // CASE BH: allocatedCount strictly represents ITEM count only
+  // ==========================================
+  assert(
+    planN.summary.allocatedCount === 0 &&
+      planN.summary.allocationSummary.taskCount === 2 &&
+      planN.summary.allocationSummary.itemCount === 0,
+    'Case BH: Performance plan has allocatedCount=0 (ITEMs only) and taskCount=2'
+  );
+
+  // ==========================================
+  // CASE BI: requestedTotalItems only controls ITEM coverage and triggers reviews appropriately
+  // ==========================================
+  const planBI = resolveAssessmentGenerationPlan({
+    generationSpec: baseSpecResolved, // 2 items
+    constraints: { assemblyMode: 'TEACHER_DEFINED', requestedTotalItems: 5 },
+  });
+  assert(
+    planBI.resolution.status === 'NEEDS_REVIEW' &&
+      planBI.resolution.issues.some((i) => i.code === 'EXTRA_ITEM_ALLOCATION_REQUIRES_REVIEW') &&
+      planBI.summary.allocatedCount === 5,
+    'Case BI: requestedTotalItems > item coverage sets allocatedCount=5 and triggers EXTRA_ITEM_ALLOCATION_REQUIRES_REVIEW'
+  );
+
+  // ==========================================
+  // CASE BJ: Invalid negative duration is preserved in constraints and fails-closed
+  // ==========================================
+  const planBJ = resolveAssessmentGenerationPlan({
+    generationSpec: baseSpecResolved,
+    constraints: { durationMinutes: -45 },
+  });
+  assert(
+    planBJ.constraints.durationMinutes === -45 &&
+      planBJ.resolution.status === 'BLOCKED' &&
+      planBJ.resolution.issues.some((i) => i.code === 'CONSTRAINT_INVALID'),
+    'Case BJ: Invalid negative durationMinutes is preserved in constraints and fails-closed with status BLOCKED'
+  );
+
+  // ==========================================
+  // CASE BK: Invalid fractional requestedTotalItems is preserved in constraints and fails-closed
+  // ==========================================
+  const planBK = resolveAssessmentGenerationPlan({
+    generationSpec: baseSpecResolved,
+    constraints: { requestedTotalItems: 3.14 },
+  });
+  assert(
+    planBK.constraints.requestedTotalItems === 3.14 &&
+      planBK.resolution.status === 'BLOCKED' &&
+      planBK.resolution.issues.some((i) => i.code === 'CONSTRAINT_INVALID'),
+    'Case BK: Invalid fractional requestedTotalItems is preserved in constraints and fails-closed with status BLOCKED'
+  );
+
+  // ==========================================
+  // CASE BL: Missing GenerationSpec returns generationSpec undefined, BLOCKED, and empty summary
+  // ==========================================
+  const planBL = resolveAssessmentGenerationPlan({ generationSpec: null });
+  assert(
+    planBL.generationSpec === undefined &&
+      planBL.resolution.status === 'BLOCKED' &&
+      planBL.summary.coverageUnitCount === 0 &&
+      planBL.summary.allocationSummary.itemCount === 0 &&
+      planBL.summary.allocationSummary.unresolvedCount === 0,
+    'Case BL: Missing GenerationSpec returns generationSpec=undefined, BLOCKED, and clean zeroed summary'
+  );
+
+  // ==========================================
+  // CASE BM: Pure PORTFOLIO spec maps to EVIDENCE in allocationSummary
+  // ==========================================
+  const specPortfolio: AssessmentGenerationSpec = {
+    ...baseSpecResolved,
+    plannedInstrumentTypes: ['PORTFOLIO'],
+    evidenceRecommendations: [
+      {
+        objectiveRefId: 'tp-mat-1',
+        evidenceTypes: ['PORTFOLIO'],
+        recommendedInstrumentTypes: ['PORTFOLIO'],
+        rationaleCode: 'PORT',
+        provenance: [],
+        confidence: 'RULE_BASED',
+      },
+    ],
+    resolution: { status: 'RESOLVED', issues: [] },
+  };
+  const planBM = resolveAssessmentGenerationPlan({ generationSpec: specPortfolio });
+  assert(
+    planBM.summary.allocationSummary.evidenceCount === 2 &&
+      planBM.summary.allocationSummary.itemCount === 0 &&
+      planBM.summary.allocatedCount === 0,
+    'Case BM: Pure PORTFOLIO spec maps to evidenceCount=2, itemCount=0, allocatedCount=0'
+  );
+
+  // ==========================================
+  // CASE BN: Pure OBSERVATION spec maps to OBSERVATION in allocationSummary
+  // ==========================================
+  const specObservation: AssessmentGenerationSpec = {
+    ...baseSpecResolved,
+    plannedInstrumentTypes: ['OBSERVATION'],
+    evidenceRecommendations: [
+      {
+        objectiveRefId: 'tp-mat-1',
+        evidenceTypes: ['OBSERVATION'],
+        recommendedInstrumentTypes: ['OBSERVATION'],
+        rationaleCode: 'OBS',
+        provenance: [],
+        confidence: 'RULE_BASED',
+      },
+    ],
+    resolution: { status: 'RESOLVED', issues: [] },
+  };
+  const planBN = resolveAssessmentGenerationPlan({ generationSpec: specObservation });
+  assert(
+    planBN.summary.allocationSummary.observationCount === 2 &&
+      planBN.summary.allocationSummary.itemCount === 0 &&
+      planBN.summary.allocatedCount === 0,
+    'Case BN: Pure OBSERVATION spec maps to observationCount=2, itemCount=0, allocatedCount=0'
+  );
+
+  // ==========================================
+  // CASE BO: Mixed coverage units properly aggregates in allocationSummary
+  // ==========================================
+  const planMixed = resolveAssessmentGenerationPlan({ generationSpec: baseSpecResolved });
+  assert(
+    planMixed.summary.allocationSummary.itemCount === 2 &&
+      planMixed.summary.allocationSummary.taskCount === 0 &&
+      planMixed.summary.allocationSummary.evidenceCount === 0 &&
+      planMixed.summary.allocationSummary.observationCount === 0 &&
+      planMixed.summary.allocationSummary.unresolvedCount === 0,
+    'Case BO: Standard WRITTEN_TEST plan has itemCount=2 and all other allocation units 0'
+  );
+
+  // ==========================================
+  // CASE BP: Invalid duration and requestedTotalItems together preserve both
+  // ==========================================
+  const planBP = resolveAssessmentGenerationPlan({
+    generationSpec: baseSpecResolved,
+    constraints: { durationMinutes: 0, requestedTotalItems: -5 },
+  });
+  assert(
+    planBP.constraints.durationMinutes === 0 &&
+      planBP.constraints.requestedTotalItems === -5 &&
+      planBP.resolution.status === 'BLOCKED',
+    'Case BP: Multiple invalid constraints are all preserved in output plan'
+  );
+
+  // ==========================================
+  // CASE BQ: Preserves assemblyMode TEACHER_DEFINED even when invalid constraints present
+  // ==========================================
+  const planBQ = resolveAssessmentGenerationPlan({
+    generationSpec: baseSpecResolved,
+    constraints: { assemblyMode: 'TEACHER_DEFINED', durationMinutes: -10 },
+  });
+  assert(
+    planBQ.constraints.assemblyMode === 'TEACHER_DEFINED' &&
+      planBQ.resolution.status === 'BLOCKED',
+    'Case BQ: assemblyMode TEACHER_DEFINED is preserved alongside invalid constraints'
+  );
+
+  // ==========================================
+  // CASE BR: RecommendedCount is strictly 1 when allocationUnit is ITEM
+  // ==========================================
+  assert(
+    planMixed.coverageUnits.every((u) => u.allocationUnit === 'ITEM' && u.recommendedCount === 1),
+    'Case BR: RecommendedCount is exactly 1 for resolved ITEM allocation units'
+  );
+
+  // ==========================================
+  // CASE BS: RecommendedCount is strictly 1 when allocationUnit is TASK
+  // ==========================================
+  assert(
+    planN.coverageUnits.every((u) => u.allocationUnit === 'TASK' && u.recommendedCount === 1),
+    'Case BS: RecommendedCount is exactly 1 for resolved TASK allocation units'
+  );
+
+  // ==========================================
+  // CASE BT: RecommendedCount is strictly 1 when allocationUnit is EVIDENCE
+  // ==========================================
+  assert(
+    planBM.coverageUnits.every((u) => u.allocationUnit === 'EVIDENCE' && u.recommendedCount === 1),
+    'Case BT: RecommendedCount is exactly 1 for resolved EVIDENCE allocation units'
+  );
+
+  // ==========================================
+  // CASE BU: RecommendedCount is strictly 1 when allocationUnit is OBSERVATION
+  // ==========================================
+  assert(
+    planBN.coverageUnits.every((u) => u.allocationUnit === 'OBSERVATION' && u.recommendedCount === 1),
+    'Case BU: RecommendedCount is exactly 1 for resolved OBSERVATION allocation units'
+  );
+
+  // ==========================================
+  // CASE BV: No inflation for multi-level criteria
+  // ==========================================
+  assert(
+    planMixed.summary.coverageUnitCount === 2 && planMixed.summary.allocatedCount === 2,
+    'Case BV: Coverage count equals criterion count without arbitrary multiplier'
+  );
+
+  // ==========================================
+  // CASE BW: Clean objective ID sanitization in deterministic ID
+  // ==========================================
+  const idSpecial = createDeterministicCoverageId('tp@mat#1! ', 'crit$1');
+  assert(
+    idSpecial === 'coverage:tp_mat_1_:crit_1',
+    'Case BW: Special characters in objectiveRefId and criterionId are safely sanitized'
+  );
+
+  // ==========================================
+  // CASE BX: Deterministic ID format consistency across null criterionId
+  // ==========================================
+  const idNullCrit = createDeterministicCoverageId('tp-1', undefined);
+  assert(
+    idNullCrit === 'coverage:tp-1:objective',
+    'Case BX: Undefined criterionId produces fallback suffix "objective"'
+  );
+
+  // ==========================================
+  // CASE BY: Single objective with multiple criteria produces distinct IDs
+  // ==========================================
+  const unitIds = planMixed.coverageUnits.map((u) => u.id);
+  assert(
+    new Set(unitIds).size === unitIds.length,
+    'Case BY: All coverage units in a plan have unique IDs'
+  );
+
+  // ==========================================
+  // CASE BZ: Status resolution - single BLOCKING issue makes whole plan BLOCKED
+  // ==========================================
+  assert(
+    planBC.resolution.status === 'BLOCKED',
+    'Case BZ: A single BLOCKING issue on any coverage unit propagates to plan status BLOCKED'
+  );
+
+  // ==========================================
+  // CASE CA: Status resolution - REVIEW issue without BLOCKING results in NEEDS_REVIEW
+  // ==========================================
+  assert(
+    planBD.resolution.status === 'NEEDS_REVIEW',
+    'Case CA: REVIEW issues without BLOCKING result in plan status NEEDS_REVIEW'
+  );
+
+  // ==========================================
+  // CASE CB: Perfect resolution produces RESOLVED status
+  // ==========================================
+  const cleanSpecResolved: AssessmentGenerationSpec = {
+    ...baseSpecResolved,
+    evidenceRecommendations: [
+      {
+        objectiveRefId: 'tp-mat-1',
+        criterionId: 'crit-mat-1',
+        evidenceTypes: ['KNOWLEDGE_RESPONSE'],
+        recommendedInstrumentTypes: ['WRITTEN_TEST'],
+        rationaleCode: 'CONCEPTUAL',
+        provenance: [],
+        confidence: 'RULE_BASED',
+      },
+      {
+        objectiveRefId: 'tp-mat-1',
+        criterionId: 'crit-mat-2',
+        evidenceTypes: ['KNOWLEDGE_RESPONSE'],
+        recommendedInstrumentTypes: ['WRITTEN_TEST'],
+        rationaleCode: 'CONCEPTUAL',
+        provenance: [],
+        confidence: 'RULE_BASED',
+      },
+    ],
+    resolution: { status: 'RESOLVED', issues: [] },
+  };
+  const planClean = resolveAssessmentGenerationPlan({ generationSpec: cleanSpecResolved });
+  assert(
+    planClean.resolution.status === 'RESOLVED' && planClean.resolution.issues.length === 0,
+    'Case CB: Clean valid input produces RESOLVED status with zero issues'
+  );
+
   console.log(`\n=== 9C.3 REGRESSION TEST RESULTS: ${passed} PASSED, ${failed} FAILED ===\n`);
   if (failed > 0) {
     process.exit(1);

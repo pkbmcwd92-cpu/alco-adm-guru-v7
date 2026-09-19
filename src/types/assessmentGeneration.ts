@@ -223,6 +223,14 @@ export interface AssessmentGenerationConstraints {
   requestedTotalItems?: number;
 }
 
+export interface AssessmentAllocationSummary {
+  itemCount: number;
+  taskCount: number;
+  evidenceCount: number;
+  observationCount: number;
+  unresolvedCount: number;
+}
+
 export interface AssessmentCoverageUnit {
   id: string;
 
@@ -232,7 +240,7 @@ export interface AssessmentCoverageUnit {
   evidenceType?: AssessmentEvidenceType;
   instrumentType?: AssessmentInstrumentType;
 
-  allocationUnit: AssessmentAllocationUnit;
+  allocationUnit?: AssessmentAllocationUnit;
   recommendedCount?: number;
 
   cognitiveDemand?: CognitiveDemand;
@@ -253,7 +261,7 @@ export interface AssessmentCoverageUnit {
 }
 
 export interface AssessmentGenerationPlan {
-  generationSpec: AssessmentGenerationSpec;
+  generationSpec?: AssessmentGenerationSpec;
 
   constraints: AssessmentGenerationConstraints;
 
@@ -264,6 +272,7 @@ export interface AssessmentGenerationPlan {
     criterionCount: number;
     coverageUnitCount: number;
     allocatedCount?: number;
+    allocationSummary: AssessmentAllocationSummary;
   };
 
   resolution: {

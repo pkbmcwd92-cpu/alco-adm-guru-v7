@@ -1,4 +1,5 @@
 import {
+  AssessmentAllocationSummary,
   AssessmentAllocationUnit,
   AssessmentCoverageUnit,
   AssessmentDifficultyTarget,
@@ -55,11 +56,12 @@ export function createDeterministicCoverageId(
 
 /**
  * Map canonical instrument type to semantic allocation unit
+ * Returns undefined if instrumentType is missing, unresolved, or unknown.
  */
 export function mapInstrumentToAllocationUnit(
   instrumentType?: AssessmentInstrumentType
-): AssessmentAllocationUnit {
-  if (!instrumentType) return 'ITEM';
+): AssessmentAllocationUnit | undefined {
+  if (!instrumentType) return undefined;
   switch (instrumentType) {
     case 'WRITTEN_TEST':
     case 'ORAL_TEST':
@@ -76,7 +78,7 @@ export function mapInstrumentToAllocationUnit(
     case 'OBSERVATION':
       return 'OBSERVATION';
     default:
-      return 'ITEM';
+      return undefined;
   }
 }
 
@@ -138,9 +140,15 @@ export function resolveAssessmentGenerationPlan(
       message: 'AssessmentGenerationSpec wajib disertakan dan tidak boleh null/undefined.',
     };
     return {
-      generationSpec: params?.generationSpec as AssessmentGenerationSpec,
+      generationSpec: undefined,
       constraints: {
         assemblyMode: params?.constraints?.assemblyMode || 'AUTO_RECOMMENDED',
+        ...(params?.constraints?.durationMinutes !== undefined
+          ? { durationMinutes: params.constraints.durationMinutes }
+          : {}),
+        ...(params?.constraints?.requestedTotalItems !== undefined
+          ? { requestedTotalItems: params.constraints.requestedTotalItems }
+          : {}),
       },
       coverageUnits: [],
       summary: {
@@ -148,6 +156,13 @@ export function resolveAssessmentGenerationPlan(
         criterionCount: 0,
         coverageUnitCount: 0,
         allocatedCount: 0,
+        allocationSummary: {
+          itemCount: 0,
+          taskCount: 0,
+          evidenceCount: 0,
+          observationCount: 0,
+          unresolvedCount: 0,
+        },
       },
       resolution: {
         status: 'BLOCKED',
@@ -168,7 +183,7 @@ export function resolveAssessmentGenerationPlan(
     });
   }
 
-  // 2. Validasi Constraints
+  // 2. Validasi Constraints & Pertahankan Input Guru (Preserve Invalid Input)
   const assemblyMode = params.constraints?.assemblyMode === 'TEACHER_DEFINED'
     ? 'TEACHER_DEFINED'
     : 'AUTO_RECOMMENDED';
@@ -206,19 +221,8 @@ export function resolveAssessmentGenerationPlan(
 
   const resolvedConstraints: AssessmentGenerationConstraints = {
     assemblyMode,
-    ...(durationMinutes !== undefined &&
-    typeof durationMinutes === 'number' &&
-    Number.isFinite(durationMinutes) &&
-    durationMinutes > 0
-      ? { durationMinutes }
-      : {}),
-    ...(requestedTotalItems !== undefined &&
-    typeof requestedTotalItems === 'number' &&
-    Number.isFinite(requestedTotalItems) &&
-    Number.isInteger(requestedTotalItems) &&
-    requestedTotalItems > 0
-      ? { requestedTotalItems }
-      : {}),
+    ...(durationMinutes !== undefined ? { durationMinutes } : {}),
+    ...(requestedTotalItems !== undefined ? { requestedTotalItems } : {}),
   };
 
   // 3. Validasi Keberadaan Objectives
@@ -282,7 +286,7 @@ export function resolveAssessmentGenerationPlan(
 
     for (const targetCritId of critTargets) {
       const unitIssues: AssessmentGenerationIssue[] = [];
-      const unitProvenance: AssessmentGenerationRule[] = [PROV_MINIMUM_COVERAGE_ALLOCATION];
+      const unitProvenance: AssessmentGenerationRule[] = [];
 
       // A. Deterministic ID
       const unitId = createDeterministicCoverageId(obj.id, targetCritId);
@@ -345,6 +349,7 @@ export function resolveAssessmentGenerationPlan(
       if (plannedInstruments.length === 1) {
         const singlePlanned = plannedInstruments[0];
         if (!VALID_INSTRUMENT_TYPES.has(singlePlanned)) {
+          resolvedInstrumentType = undefined;
           unitIssues.push({
             code: 'UNKNOWN_INSTRUMENT_TYPE',
             severity: 'BLOCKING',
@@ -362,6 +367,7 @@ export function resolveAssessmentGenerationPlan(
         if (intersected.length === 1) {
           const singleIntersected = intersected[0];
           if (!VALID_INSTRUMENT_TYPES.has(singleIntersected)) {
+            resolvedInstrumentType = undefined;
             unitIssues.push({
               code: 'UNKNOWN_INSTRUMENT_TYPE',
               severity: 'BLOCKING',
@@ -399,7 +405,7 @@ export function resolveAssessmentGenerationPlan(
         }
       }
 
-      // D. Allocation Unit
+      // D. Allocation Unit (Never default unknown/unresolved to ITEM)
       const allocationUnit = mapInstrumentToAllocationUnit(resolvedInstrumentType);
 
       // E. Cognitive Demand (Conservative, no fake HOTS)
@@ -421,8 +427,12 @@ export function resolveAssessmentGenerationPlan(
       const assessmentIndicator: string | undefined = undefined;
       const materialOrContext: string | undefined = undefined;
 
-      // G. Recommended Count (Minimum Sensible Coverage)
-      const recommendedCount = 1;
+      // G. Recommended Count (Only assigned when allocation semantics are resolved)
+      let recommendedCount: number | undefined = undefined;
+      if (allocationUnit !== undefined) {
+        recommendedCount = 1;
+        unitProvenance.push(PROV_MINIMUM_COVERAGE_ALLOCATION);
+      }
 
       // H. Evaluate Unit Status
       let unitStatus: 'RESOLVED' | 'NEEDS_REVIEW' | 'BLOCKED' = 'RESOLVED';
@@ -452,23 +462,49 @@ export function resolveAssessmentGenerationPlan(
     }
   }
 
-  // 5. Evaluasi Alokasi Guru vs Minimum Coverage
-  const minCoverageCount = coverageUnits.length;
-  let finalAllocatedCount = minCoverageCount;
+  // 5. Hitung Alokasi Semantik & Evaluasi Alokasi Guru vs Minimum ITEM Coverage
+  let itemCount = 0;
+  let taskCount = 0;
+  let evidenceCount = 0;
+  let observationCount = 0;
+  let unresolvedCount = 0;
+
+  for (const u of coverageUnits) {
+    switch (u.allocationUnit) {
+      case 'ITEM':
+        itemCount += u.recommendedCount ?? 1;
+        break;
+      case 'TASK':
+        taskCount += u.recommendedCount ?? 1;
+        break;
+      case 'EVIDENCE':
+        evidenceCount += u.recommendedCount ?? 1;
+        break;
+      case 'OBSERVATION':
+        observationCount += u.recommendedCount ?? 1;
+        break;
+      default:
+        unresolvedCount += 1;
+        break;
+    }
+  }
+
+  const minItemCoverageCount = itemCount;
+  let finalAllocatedCount = minItemCoverageCount;
 
   if (requestedTotalItems !== undefined) {
-    if (requestedTotalItems < minCoverageCount) {
+    if (requestedTotalItems < minItemCoverageCount) {
       planIssues.push({
         code: 'TEACHER_ITEM_COUNT_UNDER_COVERAGE',
         severity: 'REVIEW',
-        message: `Jumlah butir yang diminta (${requestedTotalItems}) lebih kecil dari jumlah cakupan minimal (${minCoverageCount}). Jumlah permintaan guru dipertahankan tanpa penaikan otomatis.`,
+        message: `Jumlah butir yang diminta (${requestedTotalItems}) lebih kecil dari jumlah cakupan minimal butir (${minItemCoverageCount}). Jumlah permintaan guru dipertahankan tanpa penaikan otomatis.`,
       });
       finalAllocatedCount = requestedTotalItems;
-    } else if (requestedTotalItems > minCoverageCount) {
+    } else if (requestedTotalItems > minItemCoverageCount) {
       planIssues.push({
-        code: 'EXTRA_ALLOCATION_REQUIRES_REVIEW',
+        code: 'EXTRA_ITEM_ALLOCATION_REQUIRES_REVIEW',
         severity: 'REVIEW',
-        message: `Alokasi tambahan (${requestedTotalItems - minCoverageCount} butir) di atas cakupan minimal memerlukan telaah atau penentuan distribusi oleh guru.`,
+        message: `Alokasi tambahan (${requestedTotalItems - minItemCoverageCount} butir) di atas cakupan minimal butir memerlukan telaah atau penentuan distribusi oleh guru.`,
       });
       finalAllocatedCount = requestedTotalItems;
     } else {
@@ -506,6 +542,13 @@ export function resolveAssessmentGenerationPlan(
       criterionCount: specCriteria.length,
       coverageUnitCount: coverageUnits.length,
       allocatedCount: finalAllocatedCount,
+      allocationSummary: {
+        itemCount,
+        taskCount,
+        evidenceCount,
+        observationCount,
+        unresolvedCount,
+      },
     },
     resolution: {
       status: finalPlanStatus,
