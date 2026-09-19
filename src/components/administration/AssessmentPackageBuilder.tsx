@@ -111,7 +111,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [isValidating, setIsValidating] = useState<boolean>(false);
-  const [hasValidated, setHasValidated] = useState<boolean>(false);
   const [validationReport, setValidationReport] = useState<any>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
@@ -138,7 +137,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     isGenerating,
     isRegenerating,
     isValidating,
-    hasValidated,
     academicSetting,
     tp,
     k13Analysis,
@@ -165,7 +163,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     if (!selectedPlan || selectedPlan.workflowStatus !== 'SIAP') return;
     const newPkg = createEmptyAssessmentPackage(selectedPlan, academicSetting.id, workspace?.id);
     onSaveAssessmentPackage(newPkg);
-    setHasValidated(false);
     setValidationReport(null);
   };
 
@@ -276,7 +273,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
     pkgCopy.updatedAt = new Date().toISOString();
 
     // 4. Invalidate validation state in UI
-    setHasValidated(false);
     setValidationReport(null);
 
     // 5. Persist
@@ -338,7 +334,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
             result.generatedPackage.workspaceId = workspace.id;
           }
           onSaveAssessmentPackage(result.generatedPackage);
-          setHasValidated(false);
           setValidationReport(null);
         } else {
           throw new Error('AI menghasilkan paket kosong.');
@@ -383,7 +378,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
       });
 
       setValidationReport(report);
-      setHasValidated(true);
     } catch (err: any) {
       console.error('Validation error:', err);
       setGenerationError(err.message || 'Terjadi kesalahan saat validasi perangkat.');
@@ -464,7 +458,6 @@ export const AssessmentPackageBuilder: React.FC<AssessmentPackageBuilderProps> =
         if (result.regeneratedPackage) {
           onSaveAssessmentPackage(result.regeneratedPackage);
           // Auto reset validation to force re-evaluation
-          setHasValidated(false);
           setValidationReport(null);
         }
       } else if (result.status === 'TEACHER_EDIT_PROTECTED') {
