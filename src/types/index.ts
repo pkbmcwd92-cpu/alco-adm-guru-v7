@@ -1,6 +1,8 @@
 export type CurriculumType = 'KURIKULUM_MERDEKA' | 'K13';
 export type DocumentMode = 'data' | 'blank';
 
+export type { AssessmentPackageValidationContext } from '../services/assessmentPackageService';
+
 export * from './jpEngine';
 
 export type WorkflowStatus = 'BLOCKED' | 'READY' | 'IN_PROGRESS' | 'COMPLETE' | 'STALE';
@@ -832,11 +834,13 @@ export type AssessmentStimulusOrigin =
 
 export interface AssessmentBlueprintItem {
   id: string;
+  coverageUnitId?: string;
   objectiveRefId: string; // ID for TP or KD
   criterionId?: string; // ID for KKTP Criterion
   assessmentIndicator?: string; // Indicator written by teacher
   materialOrContext?: string; // Material/Context written by teacher
   instrumentType: AssessmentInstrumentType | '';
+  instrumentId?: string;
   instrumentItemIds: string[];
   order: number;
   status?: 'DRAFT' | 'REVIEWED';
@@ -896,6 +900,7 @@ export interface WrittenAssessmentOption {
 export interface WrittenAssessmentItem {
   id: string;
   blueprintItemId?: string;
+  coverageUnitId?: string;
   itemType: WrittenAssessmentItemType | '';
   prompt: string;
   stimulus?: string;
@@ -1403,3 +1408,4 @@ export interface WorkflowStepInfo {
 }
 
 export * from './assessmentGeneration';
+export * from './assessmentValidation';

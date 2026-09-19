@@ -280,8 +280,8 @@ export function validateAssessmentPackage(
   }
 
   // 4. Instrument-Specific Validation
-  const validRubricIds = new Set(pkg.rubrics.map((r) => r.id));
-  const validScoringGuideIds = new Set(pkg.scoringGuides.map((sg) => sg.id));
+  const validRubricIds = new Set((pkg.rubrics || []).map((r) => r.id));
+  const validScoringGuideIds = new Set((pkg.scoringGuides || []).map((sg) => sg.id));
 
   pkg.instruments.forEach((inst) => {
     // Rubric and Scoring Guide reference integrity on all instruments
