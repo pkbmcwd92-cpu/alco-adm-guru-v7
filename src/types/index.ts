@@ -255,7 +255,12 @@ export interface TPItem {
   description?: string;
   competence: string; // Kompetensi / KKO yang dituju (misal: "Menganalisis", "Menjelaskan")
   contentScope: string; // Lingkup Materi / Konsep Inti
-  p3Dimensions: string[]; // Dimensi Profil Pelajar Pancasila
+  /**
+   * @deprecated Legacy compatibility.
+   * Prefer graduateProfileDimensions for current documents.
+   */
+  p3Dimensions?: string[]; // Dimensi Profil Pelajar Pancasila
+  graduateProfileDimensions?: string[]; // Dimensi Profil Lulusan (2026 canonical)
   order: number;
   sequence?: number;
   status?: 'DRAFT' | 'FINAL';
@@ -300,7 +305,12 @@ export interface ATPItem {
   allocatedJP?: number | null; // Alokasi Jam Pelajaran (explicitly nullable! Unknown = null)
   jp?: number | null; // Compatibility field
   semester?: 1 | 2 | null;
+  /**
+   * @deprecated Legacy compatibility.
+   * Prefer graduateProfileDimensions for current documents.
+   */
   p3Dimensions?: string[]; // Profil Pelajar Pancasila
+  graduateProfileDimensions?: string[]; // Dimensi Profil Lulusan (2026 canonical)
   assessmentPlan?: string; // Asesmen Awal, Formatif, Sumatif
   glossary?: string; // Kata Kunci / Glosarium
   resources?: string; // Sumber Belajar / Media
@@ -582,11 +592,45 @@ export interface ReflectionPlan {
   studentReflection?: string;
 }
 
+// ==========================================
+// CANONICAL LEARNING EXPERIENCE & PEMBELAJARAN MENDALAM (2026)
+// ==========================================
+export type LearningExperiencePhase =
+  | 'UNDERSTAND'
+  | 'APPLY'
+  | 'REFLECT';
+
+export interface LearningExperience {
+  id: string;
+  phase: LearningExperiencePhase;
+  description: string;
+  linkedTpIds?: string[];
+  durationMinutes?: number;
+}
+
+export type DeepLearningPrinciple =
+  | 'MINDFUL'
+  | 'MEANINGFUL'
+  | 'JOYFUL';
+
+export interface DeepLearningFrameworkContext {
+  pedagogicalPractice?: string[];
+  learningPartnership?: string[];
+  learningEnvironment?: string[];
+  digitalUtilization?: string[];
+}
+
+export interface DeepLearningContext {
+  principles?: DeepLearningPrinciple[];
+  graduateProfileDimensions?: string[];
+  framework?: DeepLearningFrameworkContext;
+}
+
 /**
  * Model canonical perencanaan pembelajaran (Modul Ajar / RPP).
- * Komponen minimal sesuai regulasi:
+ * Komponen minimal sesuai regulasi 2024-2026:
  * 1. Tujuan Pembelajaran (Canonical TP/ATP references)
- * 2. Langkah/Kegiatan Pembelajaran (Pendahuluan, Inti, Penutup)
+ * 2. Langkah/Pengalaman Belajar (Langkah Pembelajaran legacy atau Pengalaman Belajar canonical 2026)
  * 3. Asesmen / Rencana Penilaian (Awal, Formatif, Sumatif)
  */
 export interface LearningPlan {
@@ -607,11 +651,25 @@ export interface LearningPlan {
 
   objectives: LearningObjectiveReference[];
 
-  learningSteps: {
+  /**
+   * Legacy learning steps (opening, core, closing).
+   * Maintained for backward compatibility.
+   */
+  learningSteps?: {
     opening?: LearningActivity[];
     core?: LearningActivity[];
     closing?: LearningActivity[];
   };
+
+  /**
+   * Canonical 2026 Pengalaman Belajar (Memahami, Mengaplikasi, Merefleksi).
+   */
+  learningExperiences?: LearningExperience[];
+
+  /**
+   * Konteks Pembelajaran Mendalam (Berkesadaran, Bermakna, Menggembirakan)
+   */
+  deepLearningContext?: DeepLearningContext;
 
   assessmentPlan: {
     initial?: AssessmentPlanItem[];
@@ -631,6 +689,16 @@ export interface LearningPlan {
   initialCompetency?: string;
   targetStudents?: string;
   learningModel?: string;
+
+  /**
+   * Dimensi Profil Lulusan (Canonical 2026).
+   */
+  graduateProfileDimensions?: string[];
+
+  /**
+   * @deprecated Legacy compatibility.
+   * Prefer graduateProfileDimensions for current documents.
+   */
   p3Dimensions?: string[];
   allocatedJP?: number;
 

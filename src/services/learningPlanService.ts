@@ -11,7 +11,26 @@ import {
   CurriculumType,
   TPItem,
   ATPItem,
+  LearningExperience,
+  LearningExperiencePhase,
+  DeepLearningPrinciple,
+  DeepLearningContext,
 } from '../types';
+
+export const LEARNING_EXPERIENCE_PHASE_LABELS: Record<LearningExperiencePhase, string> = {
+  UNDERSTAND: 'Memahami',
+  APPLY: 'Mengaplikasi',
+  REFLECT: 'Merefleksi',
+};
+
+export const DEEP_LEARNING_PRINCIPLE_LABELS: Record<DeepLearningPrinciple, string> = {
+  MINDFUL: 'Berkesadaran',
+  MEANINGFUL: 'Bermakna',
+  JOYFUL: 'Menggembirakan',
+};
+
+export const GRADUATE_PROFILE_DIMENSIONS_LABEL = 'Dimensi Profil Lulusan';
+export const LEARNING_EXPERIENCES_LABEL = 'Pengalaman Belajar';
 
 export interface LearningPlanValidationResult {
   valid: boolean;
@@ -30,6 +49,7 @@ export interface LearningPlanValidationResult {
  * - UNRESOLVED > GUESS
  * - VALIDATOR > AUTO SIAP
  * - AI OUTPUT = DRAFT
+ * - TEACHER EDIT ALWAYS WINS
  */
 export function validateLearningPlan(
   plan: LearningPlan,
@@ -141,27 +161,117 @@ export function validateLearningPlan(
     }
   }
 
-  // 5. Validate Learning Steps (Kegiatan Pembelajaran)
+  // 5. Validate Learning Activity & Canonical Learning Experiences (2026 Compatible)
+  const experiences = Array.isArray(plan.learningExperiences) ? plan.learningExperiences : [];
+  const seenExpIds = new Set<string>();
+  let validExpCount = 0;
+
+  for (let i = 0; i < experiences.length; i++) {
+    const exp = experiences[i];
+    if (!exp) continue;
+
+    // Validate ID
+    if (!exp.id || exp.id.trim() === '') {
+      errors.push(`Pengalaman Belajar butir ke-${i + 1} memiliki ID kosong.`);
+    } else if (seenExpIds.has(exp.id)) {
+      errors.push(`Terdapat duplikasi ID '${exp.id}' pada Pengalaman Belajar (learningExperiences).`);
+    } else {
+      seenExpIds.add(exp.id);
+    }
+
+    // Validate phase
+    const validPhases: LearningExperiencePhase[] = ['UNDERSTAND', 'APPLY', 'REFLECT'];
+    if (!validPhases.includes(exp.phase)) {
+      errors.push(
+        `Pengalaman Belajar '${exp.id || i + 1}' memiliki fase tidak sah ('${exp.phase}'). Pilihan yang sah: UNDERSTAND (Memahami), APPLY (Mengaplikasi), REFLECT (Merefleksi).`
+      );
+    }
+
+    // Validate description
+    if (!exp.description || exp.description.trim() === '') {
+      errors.push(`Pengalaman Belajar '${exp.id || i + 1}' memiliki deskripsi kosong.`);
+    } else if (validPhases.includes(exp.phase) && exp.id) {
+      validExpCount++;
+    }
+
+    // Validate linked TP IDs (strictly canonical, no dangling references)
+    if (exp.linkedTpIds && Array.isArray(exp.linkedTpIds)) {
+      for (const linkedId of exp.linkedTpIds) {
+        if (!plan.tpIds || !plan.tpIds.includes(linkedId)) {
+          errors.push(
+            `Pengalaman Belajar '${exp.id || i + 1}' merujuk TP ID '${linkedId}' yang tidak terdaftar dalam perencanaan ini (dangling TP reference).`
+          );
+        }
+      }
+    }
+  }
+
+  // Legacy learning steps evaluation
   const openingSteps = plan.learningSteps?.opening || [];
   const coreSteps = plan.learningSteps?.core || [];
   const closingSteps = plan.learningSteps?.closing || [];
 
   const coreValidCount = coreSteps.filter((s) => s && s.description && s.description.trim().length > 0).length;
-  if (coreValidCount === 0) {
-    errors.push('Kegiatan Inti pembelajaran wajib memiliki minimal 1 langkah aktivitas yang terisi deskripsinya.');
-  }
-
   const openingValidCount = openingSteps.filter((s) => s && s.description && s.description.trim().length > 0).length;
-  if (openingValidCount === 0) {
-    warnings.push('Kegiatan Pendahuluan belum diisi deskripsi aktivitasnya.');
-  }
-
   const closingValidCount = closingSteps.filter((s) => s && s.description && s.description.trim().length > 0).length;
-  if (closingValidCount === 0) {
-    warnings.push('Kegiatan Penutup belum diisi deskripsi aktivitasnya.');
+  const hasLegacySteps = (openingValidCount + coreValidCount + closingValidCount) > 0;
+
+  // Learning activity check: valid if canonical learning experiences OR valid legacy steps exist
+  if (validExpCount > 0) {
+    // Canonical 2026 pathway satisfied! Core steps in legacy schema are NOT required.
+    if (openingValidCount === 0 && hasLegacySteps) {
+      warnings.push('Kegiatan Pendahuluan belum diisi deskripsi aktivitasnya.');
+    }
+    if (closingValidCount === 0 && hasLegacySteps) {
+      warnings.push('Kegiatan Penutup belum diisi deskripsi aktivitasnya.');
+    }
+  } else if (hasLegacySteps) {
+    // Legacy pathway validation
+    if (coreValidCount === 0) {
+      errors.push('Kegiatan Inti pembelajaran wajib memiliki minimal 1 langkah aktivitas yang terisi deskripsinya (atau sediakan Pengalaman Belajar canonical).');
+    }
+    if (openingValidCount === 0) {
+      warnings.push('Kegiatan Pendahuluan belum diisi deskripsi aktivitasnya.');
+    }
+    if (closingValidCount === 0) {
+      warnings.push('Kegiatan Penutup belum diisi deskripsi aktivitasnya.');
+    }
+  } else {
+    // Neither canonical experiences nor legacy steps exist
+    errors.push('Perencanaan Pembelajaran wajib memiliki aktivitas pembelajaran (Pengalaman Belajar canonical 2026 atau Langkah Pembelajaran legacy).');
   }
 
-  // 6. Validate Assessment Plan (Rencana Asesmen)
+  // 6. Validate Deep Learning Context (Optional contextual model - NOT mandatory checklist)
+  if (plan.deepLearningContext) {
+    if (Array.isArray(plan.deepLearningContext.principles)) {
+      const validPrinciples: DeepLearningPrinciple[] = ['MINDFUL', 'MEANINGFUL', 'JOYFUL'];
+      for (const p of plan.deepLearningContext.principles) {
+        if (!validPrinciples.includes(p)) {
+          errors.push(`Prinsip Pembelajaran Mendalam '${p}' tidak valid. Pilihan yang sah: MINDFUL (Berkesadaran), MEANINGFUL (Bermakna), JOYFUL (Menggembirakan).`);
+        }
+      }
+      const uniquePrinciples = new Set(plan.deepLearningContext.principles);
+      if (uniquePrinciples.size !== plan.deepLearningContext.principles.length) {
+        errors.push('Terdapat duplikasi nilai pada prinsip Pembelajaran Mendalam (principles).');
+      }
+    }
+    if (Array.isArray(plan.deepLearningContext.graduateProfileDimensions)) {
+      const uniqueDims = new Set(plan.deepLearningContext.graduateProfileDimensions);
+      if (uniqueDims.size !== plan.deepLearningContext.graduateProfileDimensions.length) {
+        warnings.push('Terdapat duplikasi nilai pada Dimensi Profil Lulusan pada deepLearningContext.');
+      }
+    }
+  }
+
+  // 7. Validate Graduate Profile Dimensions duplicates
+  if (Array.isArray(plan.graduateProfileDimensions)) {
+    const uniqueDims = new Set(plan.graduateProfileDimensions);
+    if (uniqueDims.size !== plan.graduateProfileDimensions.length) {
+      warnings.push('Terdapat duplikasi nilai pada Dimensi Profil Lulusan (graduateProfileDimensions).');
+    }
+  }
+
+  // 8. Validate Assessment Plan (Rencana Asesmen)
   const initialAssessments = plan.assessmentPlan?.initial || [];
   const formativeAssessments = plan.assessmentPlan?.formative || [];
   const summativeAssessments = plan.assessmentPlan?.summative || [];
@@ -182,7 +292,7 @@ export function validateLearningPlan(
     }
   }
 
-  // 7. Time / JP Allocation Resolution (Strictly from real data)
+  // 9. Time / JP Allocation Resolution (Strictly from real data)
   let resolvedAllocatedJP: number | undefined = undefined;
   if (typeof plan.allocatedJP === 'number' && !isNaN(plan.allocatedJP) && plan.allocatedJP > 0) {
     resolvedAllocatedJP = plan.allocatedJP;
@@ -199,7 +309,7 @@ export function validateLearningPlan(
     }
   }
 
-  // 8. Lifecycle & Status Validation
+  // 10. Lifecycle & Status Validation
   if (plan.status === 'SIAP') {
     if (errors.length > 0) {
       errors.push('Status SIAP tidak valid karena masih terdapat kesalahan integritas data.');
@@ -224,6 +334,7 @@ export function validateLearningPlan(
 
 /**
  * Creates an initial empty canonical LearningPlan in DRAFT status.
+ * Never fabricates experiences, deep learning principles, or graduate profile dimensions.
  */
 export function createEmptyLearningPlan(params: {
   academicSetting: AcademicSetting;
@@ -263,6 +374,7 @@ export function createEmptyLearningPlan(params: {
     title: objectives.length > 0 ? `Modul Ajar: ${objectives[0].materialScope || objectives[0].code || 'Topik Pembelajaran'}` : '',
     topic: objectives.length > 0 ? (objectives[0].materialScope || '') : '',
     objectives,
+    learningExperiences: [],
     learningSteps: {
       opening: [],
       core: [],
@@ -281,6 +393,7 @@ export function createEmptyLearningPlan(params: {
 
 /**
  * Creates an AI Draft LearningPlan. Always sets sourceType: 'AI_DRAFT' and status: 'DRAFT'.
+ * Preserves teacher/draft data without fabricating missing experiences/principles/dimensions.
  */
 export function createAIDraftLearningPlan(params: {
   academicSetting: AcademicSetting;
@@ -321,6 +434,9 @@ export function createAIDraftLearningPlan(params: {
     title: aiDraft.title || (objectives.length > 0 ? `Draf Modul Ajar: ${objectives[0].materialScope || objectives[0].code || 'Topik'}` : 'Draf Modul Ajar'),
     topic: aiDraft.topic || (objectives.length > 0 ? objectives[0].materialScope : ''),
     objectives: objectives.length > 0 ? objectives : (aiDraft.objectives || []),
+    learningExperiences: Array.isArray(aiDraft.learningExperiences) ? aiDraft.learningExperiences : [],
+    deepLearningContext: aiDraft.deepLearningContext,
+    graduateProfileDimensions: Array.isArray(aiDraft.graduateProfileDimensions) ? aiDraft.graduateProfileDimensions : undefined,
     learningSteps: {
       opening: aiDraft.learningSteps?.opening || [],
       core: aiDraft.learningSteps?.core || [],
@@ -529,6 +645,17 @@ export function migrateLegacyLearningPlan(
       core,
       closing,
     },
+    learningExperiences: Array.isArray(legacy?.learningExperiences)
+      ? legacy.learningExperiences.map((exp: any, idx: number) => ({
+          id: exp.id || `exp-${idx + 1}`,
+          phase: exp.phase,
+          description: exp.description || '',
+          linkedTpIds: Array.isArray(exp.linkedTpIds) ? exp.linkedTpIds : undefined,
+          durationMinutes: typeof exp.durationMinutes === 'number' ? exp.durationMinutes : undefined,
+        }))
+      : undefined,
+    deepLearningContext: legacy?.deepLearningContext,
+    graduateProfileDimensions: Array.isArray(legacy?.graduateProfileDimensions) ? legacy.graduateProfileDimensions : undefined,
     assessmentPlan: {
       initial: initialAssessments,
       formative: formativeAssessments,

@@ -175,14 +175,23 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
       .join('\n');
   }
 
-  // Compile P3 dimensions (strictly from p3Dimensions field, no fallback from materialScope)
-  const explicitP3 = plan.p3Dimensions && plan.p3Dimensions.length > 0 ? plan.p3Dimensions : [];
-  const p3Text = explicitP3.length > 0 ? explicitP3.join(', ') : '-';
+  // Compile Profil dimensions (prefer graduateProfileDimensions, backward compatible with p3Dimensions)
+  const explicitDimensions =
+    plan.graduateProfileDimensions && plan.graduateProfileDimensions.length > 0
+      ? plan.graduateProfileDimensions
+      : plan.p3Dimensions && plan.p3Dimensions.length > 0
+      ? plan.p3Dimensions
+      : [];
+  const dimensionTitle =
+    plan.graduateProfileDimensions && plan.graduateProfileDimensions.length > 0
+      ? 'B. Dimensi Profil Lulusan'
+      : 'B. Profil Pelajar Pancasila';
+  const dimensionsText = explicitDimensions.length > 0 ? explicitDimensions.join(', ') : '-';
 
   // I. INFORMASI UMUM
   addSectionTitle('I. INFORMASI UMUM');
   addSubSection('A. Kompetensi Awal', isBlankMode ? '........................................................' : (plan.initialCompetency || '-'));
-  addSubSection('B. Profil Pelajar Pancasila', isBlankMode ? '........................................................' : p3Text);
+  addSubSection(dimensionTitle, isBlankMode ? '........................................................' : dimensionsText);
 
   // Resources
   const resourcesText =
@@ -192,9 +201,9 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
   addSubSection('C. Sarana dan Prasarana', isBlankMode ? '........................................................' : resourcesText);
 
   // Students count
-  const studentCountText = context.students?.length !== undefined ? `${context.students.length} Siswa` : '-';
-  const targetStudentsFull = `Jumlah Peserta Didik: ${studentCountText}${plan.targetStudents ? `\nTarget/Karakteristik: ${plan.targetStudents}` : ''}`;
-  addSubSection('D. Target Peserta Didik', isBlankMode ? 'Jumlah Siswa: ..........\nKarakteristik: ........................................................' : targetStudentsFull);
+  const studentCountText = context.students?.length !== undefined ? `${context.students.length} Murid` : '-';
+  const targetStudentsFull = `Jumlah Murid: ${studentCountText}${plan.targetStudents ? `\nTarget/Karakteristik: ${plan.targetStudents}` : ''}`;
+  addSubSection('D. Target Murid', isBlankMode ? 'Jumlah Murid: ..........\nKarakteristik: ........................................................' : targetStudentsFull);
 
   addSubSection('E. Model Pembelajaran', isBlankMode ? '........................................................' : (plan.learningModel || '-'));
 
@@ -209,31 +218,56 @@ export async function generateModulAjar(context: DocumentGenerationContext): Pro
       : '-';
   addSubSection('C. Pertanyaan Pemantik', isBlankMode ? '........................................................................................................................' : triggerQuestionsText);
 
-  // III. KEGIATAN PEMBELAJARAN
-  addSectionTitle('III. KEGIATAN PEMBELAJARAN');
-
+  // III. KEGIATAN / PENGALAMAN PEMBELAJARAN
+  const experiences = plan.learningExperiences || [];
   const openingSteps = plan.learningSteps?.opening || [];
   const coreSteps = plan.learningSteps?.core || [];
   const closingSteps = plan.learningSteps?.closing || [];
 
-  const formatStepGroup = (label: string, steps: typeof openingSteps) => {
-    if (isBlankMode) {
-      return `${label}:\n........................................................................................................................`;
-    }
-    if (steps.length === 0) {
-      return `${label}: -`;
-    }
-    return `${label}:\n${steps
-      .map(
-        (s, i) =>
-          `• ${s.title ? `[${s.title}] ` : ''}${s.description}${typeof s.durationMinutes === 'number' && s.durationMinutes > 0 ? ` (${s.durationMinutes} Menit)` : ''}`
-      )
-      .join('\n')}`;
-  };
+  if (experiences.length > 0) {
+    addSectionTitle('III. PENGALAMAN BELAJAR');
 
-  addSubSection('A. Kegiatan Pendahuluan', formatStepGroup('Kegiatan Pendahuluan', openingSteps));
-  addSubSection('B. Kegiatan Inti', formatStepGroup('Kegiatan Inti', coreSteps));
-  addSubSection('C. Kegiatan Penutup', formatStepGroup('Kegiatan Penutup', closingSteps));
+    const formatExpGroup = (phase: 'UNDERSTAND' | 'APPLY' | 'REFLECT', label: string) => {
+      const filtered = experiences.filter((e) => e.phase === phase);
+      if (isBlankMode) {
+        return `${label}:\n........................................................................................................................`;
+      }
+      if (filtered.length === 0) {
+        return `${label}: -`;
+      }
+      return `${label}:\n${filtered
+        .map(
+          (e) =>
+            `• ${e.description}${typeof e.durationMinutes === 'number' && e.durationMinutes > 0 ? ` (${e.durationMinutes} Menit)` : ''}`
+        )
+        .join('\n')}`;
+    };
+
+    addSubSection('A. Memahami (Understand)', formatExpGroup('UNDERSTAND', 'Memahami'));
+    addSubSection('B. Mengaplikasi (Apply)', formatExpGroup('APPLY', 'Mengaplikasi'));
+    addSubSection('C. Merefleksi (Reflect)', formatExpGroup('REFLECT', 'Merefleksi'));
+  } else {
+    addSectionTitle('III. KEGIATAN PEMBELAJARAN');
+
+    const formatStepGroup = (label: string, steps: typeof openingSteps) => {
+      if (isBlankMode) {
+        return `${label}:\n........................................................................................................................`;
+      }
+      if (steps.length === 0) {
+        return `${label}: -`;
+      }
+      return `${label}:\n${steps
+        .map(
+          (s, i) =>
+            `• ${s.title ? `[${s.title}] ` : ''}${s.description}${typeof s.durationMinutes === 'number' && s.durationMinutes > 0 ? ` (${s.durationMinutes} Menit)` : ''}`
+        )
+        .join('\n')}`;
+    };
+
+    addSubSection('A. Kegiatan Pendahuluan', formatStepGroup('Kegiatan Pendahuluan', openingSteps));
+    addSubSection('B. Kegiatan Inti', formatStepGroup('Kegiatan Inti', coreSteps));
+    addSubSection('C. Kegiatan Penutup', formatStepGroup('Kegiatan Penutup', closingSteps));
+  }
 
   if (plan.differentiation) {
     const diffText = [
