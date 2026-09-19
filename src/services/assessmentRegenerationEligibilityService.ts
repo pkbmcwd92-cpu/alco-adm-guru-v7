@@ -32,8 +32,14 @@ export class AssessmentRegenerationEligibilityService {
     }
 
     if (dimension === 'GRADE_LANGUAGE') {
-      // Direct mapping to ITEM_PROMPT as default for grade language issue in item
-      return 'ITEM_PROMPT';
+      const targetField = (finding as any).targetField || (finding as any).metadata?.targetField;
+      if (targetField === 'ITEM_PROMPT') {
+        return 'ITEM_PROMPT';
+      }
+      if (targetField === 'STIMULUS') {
+        return 'STIMULUS';
+      }
+      return null;
     }
 
     if (code.includes('RUBRIC') || (finding.instrumentId && code.toLowerCase().includes('rubric'))) {

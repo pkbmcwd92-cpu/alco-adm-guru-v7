@@ -8,7 +8,36 @@ import {
   AssessmentRegenerationTarget,
 } from '../types';
 import { assessmentRegenerationDependencyService } from './assessmentRegenerationDependencyService';
-import { assessmentRegenerationEligibilityService } from './assessmentRegenerationEligibilityService';
+
+const TARGET_ALLOWED_KEYS: Record<AssessmentRegenerationTarget, string[]> = {
+  INDICATOR: ['assessmentIndicator'],
+  MATERIAL_CONTEXT: ['materialOrContext'],
+  ITEM_PROMPT: ['prompt'],
+  STIMULUS: ['stimulus', 'stimulusOrigin', 'stimulusSource'],
+  OPTIONS: ['options'],
+  PROPOSED_ANSWER: ['value', 'optionIds', 'matchingPairs', 'categoryAnswers'],
+  SCORING_GUIDE: ['title', 'guideType', 'instructions', 'maxScore'],
+  RUBRIC: ['title', 'criteria', 'scale'],
+  TASK: [
+    'task',
+    'instructions',
+    'expectedOutput',
+    'projectBrief',
+    'expectedDeliverable',
+    'productBrief',
+    'expectedProduct',
+  ],
+  EVIDENCE_REQUIREMENT: ['evidenceRequirements'],
+  OBSERVATION_CONTENT: ['aspects', 'recordingScheme'],
+  COVERAGE_UNIT: ['assessmentIndicator', 'materialOrContext'],
+};
+
+const TASK_KEYS_BY_TYPE: Record<string, string[]> = {
+  PERFORMANCE: ['task', 'instructions'],
+  ASSIGNMENT: ['instructions', 'expectedOutput'],
+  PROJECT: ['projectBrief', 'expectedDeliverable'],
+  PRODUCT: ['productBrief', 'expectedProduct'],
+};
 
 export class AssessmentRegenerationService {
   /**
@@ -23,16 +52,18 @@ export class AssessmentRegenerationService {
       gradeCalibration?: any;
       subjectProfile?: any;
       validationFindings?: any[];
+      getCurrentPackageRevision?: () => number | Promise<number>;
     }
   ): Promise<AssessmentRegenerationResult> {
-    const issues: string[] = [];
-
-    // 1. Concurrency Guard / Revision Check
     const pkgRevision = pkg.revision ?? 1;
+
+    // 1. Concurrency Guard / Revision Check (pre-provider check)
     if (request.expectedPackageRevision !== pkgRevision) {
       return {
         status: 'STALE_REGENERATION_REQUEST',
-        issues: [`Request expected revision ${request.expectedPackageRevision} but package is at revision ${pkgRevision}.`],
+        issues: [
+          `Request expected revision ${request.expectedPackageRevision} but package is at revision ${pkgRevision}.`,
+        ],
       };
     }
 
@@ -41,7 +72,9 @@ export class AssessmentRegenerationService {
     if (!targetLocator.found) {
       return {
         status: 'FAILED',
-        issues: [`Target '${request.target}' with ID '${request.targetId}' not found in the assessment package.`],
+        issues: [
+          `Target '${request.target}' with ID '${request.targetId}' not found in the assessment package.`,
+        ],
       };
     }
 
@@ -61,7 +94,9 @@ export class AssessmentRegenerationService {
     if (isTeacherEdited && request.explicitTeacherOverride !== true) {
       return {
         status: 'TEACHER_EDIT_PROTECTED',
-        issues: [`Target field of '${request.target}' with ID '${request.targetId}' has been edited by a teacher. Explicit override required.`],
+        issues: [
+          `Target field of '${request.target}' with ID '${request.targetId}' has been edited by a teacher. Explicit override required.`,
+        ],
       };
     }
 
@@ -103,8 +138,26 @@ export class AssessmentRegenerationService {
       };
     }
 
-    // 6. Runtime Validation of Untrusted Provider Output
-    const validation = this.validateProviderOutput(request.target, request.targetId, providerOutput, contract);
+    // 5.5 Apply-Time Revision Guard (Blocker 1)
+    if (extra?.getCurrentPackageRevision) {
+      const currentRev = await extra.getCurrentPackageRevision();
+      if (currentRev !== pkgRevision) {
+        return {
+          status: 'STALE_REGENERATION_REQUEST',
+          issues: [
+            `Request started at revision ${pkgRevision} but authoritative revision became ${currentRev} during provider run.`,
+          ],
+        };
+      }
+    }
+
+    // 6. Runtime Validation of Untrusted Provider Output (Blocker 2 & 3)
+    const validation = this.validateProviderOutput(
+      request.target,
+      request.targetId,
+      providerOutput,
+      contract
+    );
     if (!validation.valid) {
       return {
         status: 'FAILED',
@@ -124,7 +177,7 @@ export class AssessmentRegenerationService {
       };
     }
 
-    // 8. Dependency Invalidation Engine
+    // 8. Dependency Invalidation Engine (Blocker 5)
     const invalidatedPkg = assessmentRegenerationDependencyService.invalidateDependencies(
       clonedPkg,
       request.target,
@@ -157,34 +210,73 @@ export class AssessmentRegenerationService {
   }
 
   /**
-   * Helper to inspect provenance of a target element to see if it was modified by a teacher.
+   * Helper to inspect provenance of a target element to see if it was modified by a teacher (Blocker 6).
    */
   private checkTeacherEdited(target: AssessmentRegenerationTarget, element: any): boolean {
     if (!element) return false;
 
-    // Check direct provenance
+    // Check direct provenance string
     if (element.provenance === 'TEACHER_EDITED') return true;
 
-    // Check nested provenance
-    if (element.provenance?.fields) {
-      if (target === 'ITEM_PROMPT' && element.provenance.fields.prompt === 'TEACHER_EDITED') return true;
-      if (target === 'OPTIONS' && element.provenance.fields.options === 'TEACHER_EDITED') return true;
-      if (target === 'STIMULUS' && element.provenance.fields.stimulus === 'TEACHER_EDITED') return true;
-      if (target === 'RUBRIC' && element.provenance.fields.criteria === 'TEACHER_EDITED') return true;
-      if (target === 'INDICATOR' && element.provenance.fields.assessmentIndicator === 'TEACHER_EDITED') return true;
-      if (target === 'MATERIAL_CONTEXT' && element.provenance.fields.materialOrContext === 'TEACHER_EDITED') return true;
-    }
+    // Resolve fields related to this target
+    const targetFieldsMap: Record<AssessmentRegenerationTarget, string[]> = {
+      INDICATOR: ['assessmentIndicator'],
+      MATERIAL_CONTEXT: ['materialOrContext'],
+      ITEM_PROMPT: ['prompt'],
+      STIMULUS: ['stimulus'],
+      OPTIONS: ['options'],
+      PROPOSED_ANSWER: ['value', 'answer'],
+      SCORING_GUIDE: ['instructions', 'maxScore', 'title'],
+      RUBRIC: ['criteria', 'scale', 'title'],
+      TASK: [
+        'task',
+        'instructions',
+        'expectedOutput',
+        'projectBrief',
+        'expectedDeliverable',
+        'productBrief',
+        'expectedProduct',
+      ],
+      EVIDENCE_REQUIREMENT: ['evidenceRequirements'],
+      OBSERVATION_CONTENT: ['aspects', 'recordingScheme'],
+      COVERAGE_UNIT: ['assessmentIndicator', 'materialOrContext'],
+    };
 
-    if (element.provenance) {
-      if (target === 'ITEM_PROMPT' && element.provenance.prompt === 'TEACHER_EDITED') return true;
-      if (target === 'OPTIONS' && element.provenance.options === 'TEACHER_EDITED') return true;
-      if (target === 'STIMULUS' && element.provenance.stimulus === 'TEACHER_EDITED') return true;
-      if (target === 'RUBRIC' && element.provenance.criteria === 'TEACHER_EDITED') return true;
-      if (target === 'INDICATOR' && element.provenance.assessmentIndicator === 'TEACHER_EDITED') return true;
-      if (target === 'MATERIAL_CONTEXT' && element.provenance.materialOrContext === 'TEACHER_EDITED') return true;
+    const fields = targetFieldsMap[target] || [];
+
+    // Check if the provenance specifically marks any target fields as TEACHER_EDITED
+    if (element.provenance && typeof element.provenance === 'object') {
+      const p = element.provenance;
+      const f = p.fields || p;
+      for (const field of fields) {
+        if (f[field] === 'TEACHER_EDITED') {
+          return true;
+        }
+      }
     }
 
     return false;
+  }
+
+  /**
+   * Helper to merge and preserve field-level provenance without destroying others (Blocker 6)
+   */
+  private updateFieldProvenance(
+    existingProvenance: any,
+    fieldName: string,
+    status: 'AI_REGENERATED' | 'TEACHER_EDITED'
+  ): any {
+    let prov: any = {};
+    if (existingProvenance) {
+      if (typeof existingProvenance === 'string') {
+        prov = { originalOwner: existingProvenance, fields: {} };
+      } else if (typeof existingProvenance === 'object') {
+        prov = JSON.parse(JSON.stringify(existingProvenance));
+      }
+    }
+    prov.fields = prov.fields || {};
+    prov.fields[fieldName] = status;
+    return prov;
   }
 
   /**
@@ -219,15 +311,19 @@ export class AssessmentRegenerationService {
           criterionId: bp.criterionId,
           instrumentType: bp.instrumentType,
           cognitiveDemand: bp.cognitiveDemand,
-          preservedContent: { id: bp.id, coverageUnitId: bp.coverageUnitId, objectiveRefId: bp.objectiveRefId },
-          editableContent: target === 'INDICATOR' ? bp.assessmentIndicator : bp.materialOrContext,
+          preservedContent: {
+            id: bp.id,
+            coverageUnitId: bp.coverageUnitId,
+            objectiveRefId: bp.objectiveRefId,
+          },
+          editableContent:
+            target === 'INDICATOR' ? bp.assessmentIndicator : bp.materialOrContext,
         };
       }
 
       case 'ITEM_PROMPT':
       case 'STIMULUS':
       case 'OPTIONS': {
-        // Search instruments
         for (const inst of pkg.instruments || []) {
           if ('items' in inst && Array.isArray(inst.items)) {
             const item: any = inst.items.find((i: any) => i.id === targetId);
@@ -258,43 +354,74 @@ export class AssessmentRegenerationService {
       }
 
       case 'PROPOSED_ANSWER': {
-        const ak = (pkg.answerKeys || []).find((a) => a.id === targetId || a.instrumentItemId === targetId);
+        const ak = (pkg.answerKeys || []).find(
+          (a) => a.id === targetId || a.instrumentItemId === targetId
+        );
         if (!ak) return { found: false };
         const inst = pkg.instruments.find((i) => i.id === ak.instrumentId);
         return {
           found: true,
           targetElement: ak,
           instrumentType: inst?.type,
-          preservedContent: { id: ak.id, instrumentId: ak.instrumentId, instrumentItemId: ak.instrumentItemId, answerType: ak.answerType },
-          editableContent: { value: ak.value, optionIds: ak.optionIds, matchingPairs: ak.matchingPairs, categoryAnswers: ak.categoryAnswers },
+          preservedContent: {
+            id: ak.id,
+            instrumentId: ak.instrumentId,
+            instrumentItemId: ak.instrumentItemId,
+            answerType: ak.answerType,
+          },
+          editableContent: {
+            value: ak.value,
+            optionIds: ak.optionIds,
+            matchingPairs: ak.matchingPairs,
+            categoryAnswers: ak.categoryAnswers,
+          },
         };
       }
 
       case 'SCORING_GUIDE': {
-        const sg = (pkg.scoringGuides || []).find((s) => s.id === targetId || s.instrumentItemId === targetId);
+        const sg = (pkg.scoringGuides || []).find(
+          (s) => s.id === targetId || s.instrumentItemId === targetId
+        );
         if (!sg) return { found: false };
         return {
           found: true,
           targetElement: sg,
-          preservedContent: { id: sg.id, instrumentId: sg.instrumentId, instrumentItemId: sg.instrumentItemId },
-          editableContent: { title: sg.title, guideType: sg.guideType, instructions: sg.instructions, maxScore: sg.maxScore },
+          preservedContent: {
+            id: sg.id,
+            instrumentId: sg.instrumentId,
+            instrumentItemId: sg.instrumentItemId,
+          },
+          editableContent: {
+            title: sg.title,
+            guideType: sg.guideType,
+            instructions: sg.instructions,
+            maxScore: sg.maxScore,
+          },
         };
       }
 
       case 'RUBRIC': {
-        const rb = (pkg.rubrics || []).find((r) => r.id === targetId || r.instrumentItemId === targetId);
+        const rb = (pkg.rubrics || []).find(
+          (r) => r.id === targetId || r.instrumentItemId === targetId
+        );
         if (!rb) return { found: false };
         return {
           found: true,
           targetElement: rb,
-          preservedContent: { id: rb.id, instrumentId: rb.instrumentId, instrumentItemId: rb.instrumentItemId },
+          preservedContent: {
+            id: rb.id,
+            instrumentId: rb.instrumentId,
+            instrumentItemId: rb.instrumentItemId,
+          },
           editableContent: { title: rb.title, criteria: rb.criteria, scale: rb.scale },
         };
       }
 
       case 'TASK': {
         const inst = (pkg.instruments || []).find(
-          (i) => i.id === targetId && ['PERFORMANCE', 'ASSIGNMENT', 'PROJECT', 'PRODUCT'].includes(i.type)
+          (i) =>
+            i.id === targetId &&
+            ['PERFORMANCE', 'ASSIGNMENT', 'PROJECT', 'PRODUCT'].includes(i.type)
         );
         if (!inst) return { found: false };
         return {
@@ -308,7 +435,9 @@ export class AssessmentRegenerationService {
       }
 
       case 'EVIDENCE_REQUIREMENT': {
-        const inst = (pkg.instruments || []).find((i) => i.id === targetId && i.type === 'PORTFOLIO');
+        const inst = (pkg.instruments || []).find(
+          (i) => i.id === targetId && i.type === 'PORTFOLIO'
+        );
         if (!inst) return { found: false };
         return {
           found: true,
@@ -321,7 +450,9 @@ export class AssessmentRegenerationService {
       }
 
       case 'OBSERVATION_CONTENT': {
-        const inst = (pkg.instruments || []).find((i) => i.id === targetId && i.type === 'OBSERVATION');
+        const inst = (pkg.instruments || []).find(
+          (i) => i.id === targetId && i.type === 'OBSERVATION'
+        );
         if (!inst) return { found: false };
         return {
           found: true,
@@ -344,7 +475,11 @@ export class AssessmentRegenerationService {
           objectiveRefId: bp.objectiveRefId,
           criterionId: bp.criterionId,
           instrumentType: bp.instrumentType,
-          preservedContent: { coverageUnitId: bp.coverageUnitId, objectiveRefId: bp.objectiveRefId, criterionId: bp.criterionId },
+          preservedContent: {
+            coverageUnitId: bp.coverageUnitId,
+            objectiveRefId: bp.objectiveRefId,
+            criterionId: bp.criterionId,
+          },
           editableContent: bp,
         };
       }
@@ -368,16 +503,26 @@ export class AssessmentRegenerationService {
     }
 
     // Whole package replacement is strictly rejected
-    if (output.package || output.assessmentPackage || ('blueprintItems' in output && 'instruments' in output)) {
+    if (
+      output.package ||
+      output.assessmentPackage ||
+      ('blueprintItems' in output && 'instruments' in output)
+    ) {
       return { valid: false, reason: 'AI proposed a whole-package replacement, which is forbidden' };
     }
 
     if (output.target !== target) {
-      return { valid: false, reason: `AI returned target '${output.target}' instead of requested target '${target}'` };
+      return {
+        valid: false,
+        reason: `AI returned target '${output.target}' instead of requested target '${target}'`,
+      };
     }
 
     if (output.targetId !== targetId) {
-      return { valid: false, reason: `AI returned targetId '${output.targetId}' instead of requested targetId '${targetId}'` };
+      return {
+        valid: false,
+        reason: `AI returned targetId '${output.targetId}' instead of requested targetId '${targetId}'`,
+      };
     }
 
     const proposed = output.proposedChanges;
@@ -385,26 +530,63 @@ export class AssessmentRegenerationService {
       return { valid: false, reason: 'AI output must specify a valid proposedChanges object' };
     }
 
-    // Protect immutable canonical fields inside proposed changes
-    const canonicalFields = ['coverageUnitId', 'objectiveRefId', 'criterionId', 'instrumentType', 'allocationUnit'];
+    // Strict Target Allowlist Check & Immutable Field Presence Check (Blocker 2)
+    const canonicalFields = [
+      'coverageUnitId',
+      'objectiveRefId',
+      'criterionId',
+      'instrumentType',
+      'allocationUnit',
+    ];
     for (const f of canonicalFields) {
-      if (f in proposed && proposed[f] !== contract.immutableContext[f as keyof typeof contract.immutableContext]) {
-        return { valid: false, reason: `AI output attempted to modify forbidden canonical field: ${f}` };
+      if (f in proposed) {
+        return { valid: false, reason: `AI proposedChanges contains forbidden canonical field: ${f}` };
       }
     }
 
-    // Target-specific runtime validations
+    const allowedKeys = TARGET_ALLOWED_KEYS[target];
+    if (!allowedKeys) {
+      return { valid: false, reason: `No allowed keys registry defined for target target: ${target}` };
+    }
+
+    const proposedKeys = Object.keys(proposed);
+    if (proposedKeys.length === 0) {
+      return { valid: false, reason: 'proposedChanges cannot be an empty object' };
+    }
+
+    for (const key of proposedKeys) {
+      if (!allowedKeys.includes(key)) {
+        return {
+          valid: false,
+          reason: `Unexpected field '${key}' is not allowed for target type ${target}`,
+        };
+      }
+    }
+
+    // Complete Target-Specific Runtime Schema Validation (Blocker 3)
     switch (target) {
       case 'INDICATOR': {
-        if (typeof proposed.assessmentIndicator !== 'string' || proposed.assessmentIndicator.trim() === '') {
-          return { valid: false, reason: "INDICATOR target requires non-empty string 'assessmentIndicator'" };
+        if (
+          typeof proposed.assessmentIndicator !== 'string' ||
+          proposed.assessmentIndicator.trim() === ''
+        ) {
+          return {
+            valid: false,
+            reason: "INDICATOR target requires non-empty string 'assessmentIndicator'",
+          };
         }
         break;
       }
 
       case 'MATERIAL_CONTEXT': {
-        if (typeof proposed.materialOrContext !== 'string' || proposed.materialOrContext.trim() === '') {
-          return { valid: false, reason: "MATERIAL_CONTEXT target requires non-empty string 'materialOrContext'" };
+        if (
+          typeof proposed.materialOrContext !== 'string' ||
+          proposed.materialOrContext.trim() === ''
+        ) {
+          return {
+            valid: false,
+            reason: "MATERIAL_CONTEXT target requires non-empty string 'materialOrContext'",
+          };
         }
         break;
       }
@@ -417,8 +599,8 @@ export class AssessmentRegenerationService {
       }
 
       case 'STIMULUS': {
-        if (typeof proposed.stimulus !== 'string') {
-          return { valid: false, reason: "STIMULUS target requires string 'stimulus'" };
+        if (typeof proposed.stimulus !== 'string' || proposed.stimulus.trim() === '') {
+          return { valid: false, reason: "STIMULUS target requires non-empty string 'stimulus'" };
         }
         break;
       }
@@ -429,35 +611,261 @@ export class AssessmentRegenerationService {
         }
         for (const opt of proposed.options) {
           if (!opt.id || typeof opt.text !== 'string' || opt.text.trim() === '') {
-            return { valid: false, reason: 'Each option in OPTIONS must contain a valid id and non-empty string text' };
+            return {
+              valid: false,
+              reason: 'Each option in OPTIONS must contain a valid id and non-empty string text',
+            };
           }
         }
         break;
       }
 
+      case 'PROPOSED_ANSWER': {
+        const hasKey =
+          'value' in proposed ||
+          'optionIds' in proposed ||
+          'matchingPairs' in proposed ||
+          'categoryAnswers' in proposed;
+        if (!hasKey) {
+          return {
+            valid: false,
+            reason: 'PROPOSED_ANSWER must specify value, optionIds, matchingPairs, or categoryAnswers',
+          };
+        }
+        if ('value' in proposed && (typeof proposed.value !== 'string' || proposed.value.trim() === '')) {
+          return { valid: false, reason: 'PROPOSED_ANSWER value must be a non-empty string' };
+        }
+        if ('optionIds' in proposed) {
+          if (!Array.isArray(proposed.optionIds) || proposed.optionIds.length === 0) {
+            return { valid: false, reason: 'PROPOSED_ANSWER optionIds must be a non-empty array' };
+          }
+          if (proposed.optionIds.some((id: any) => typeof id !== 'string' || id.trim() === '')) {
+            return { valid: false, reason: 'PROPOSED_ANSWER optionIds must be an array of non-empty strings' };
+          }
+        }
+        if ('matchingPairs' in proposed) {
+          if (!Array.isArray(proposed.matchingPairs) || proposed.matchingPairs.length === 0) {
+            return { valid: false, reason: 'PROPOSED_ANSWER matchingPairs must be a non-empty array' };
+          }
+          for (const pair of proposed.matchingPairs) {
+            if (
+              !pair.premiseId ||
+              typeof pair.premiseId !== 'string' ||
+              pair.premiseId.trim() === '' ||
+              !pair.responseId ||
+              typeof pair.responseId !== 'string' ||
+              pair.responseId.trim() === ''
+            ) {
+              return { valid: false, reason: 'Each pair in matchingPairs must have a premiseId and responseId' };
+            }
+          }
+        }
+        if ('categoryAnswers' in proposed) {
+          if (!Array.isArray(proposed.categoryAnswers) || proposed.categoryAnswers.length === 0) {
+            return { valid: false, reason: 'PROPOSED_ANSWER categoryAnswers must be a non-empty array' };
+          }
+          for (const ans of proposed.categoryAnswers) {
+            if (
+              !ans.statementId ||
+              typeof ans.statementId !== 'string' ||
+              ans.statementId.trim() === '' ||
+              !ans.categoryId ||
+              typeof ans.categoryId !== 'string' ||
+              ans.categoryId.trim() === ''
+            ) {
+              return { valid: false, reason: 'Each categoryAnswer must have a statementId and categoryId' };
+            }
+          }
+        }
+        break;
+      }
+
+      case 'SCORING_GUIDE': {
+        const hasField =
+          'instructions' in proposed ||
+          'title' in proposed ||
+          'guideType' in proposed ||
+          'maxScore' in proposed;
+        if (!hasField) {
+          return { valid: false, reason: 'SCORING_GUIDE must contain at least one valid editable field' };
+        }
+        if ('guideType' in proposed) {
+          const validTypes = ['OBJECTIVE', 'MANUAL', 'ESSAY', 'RUBRIC_BASED'];
+          if (!validTypes.includes(proposed.guideType)) {
+            return { valid: false, reason: `Invalid guideType: ${proposed.guideType}` };
+          }
+        }
+        if ('maxScore' in proposed && (typeof proposed.maxScore !== 'number' || proposed.maxScore < 0)) {
+          return { valid: false, reason: 'SCORING_GUIDE maxScore must be a positive number' };
+        }
+        if ('instructions' in proposed && typeof proposed.instructions !== 'string') {
+          return { valid: false, reason: 'SCORING_GUIDE instructions must be a string' };
+        }
+        break;
+      }
+
       case 'RUBRIC': {
-        if (!Array.isArray(proposed.criteria) || !Array.isArray(proposed.scale)) {
-          return { valid: false, reason: 'RUBRIC target requires both criteria and scale arrays' };
+        const hasField = 'criteria' in proposed || 'scale' in proposed || 'title' in proposed;
+        if (!hasField) {
+          return { valid: false, reason: 'RUBRIC target requires at least one editable field (criteria, scale, title)' };
+        }
+
+        if ('criteria' in proposed) {
+          if (!Array.isArray(proposed.criteria) || proposed.criteria.length === 0) {
+            return { valid: false, reason: 'RUBRIC target requires a non-empty criteria array' };
+          }
+          const critIds = new Set<string>();
+          for (const crit of proposed.criteria) {
+            if (!crit.id || typeof crit.id !== 'string' || crit.id.trim() === '') {
+              return { valid: false, reason: 'Rubric criteria must contain a valid non-empty id' };
+            }
+            if (!crit.label || typeof crit.label !== 'string' || crit.label.trim() === '') {
+              return { valid: false, reason: 'Rubric criteria must contain a valid non-empty label' };
+            }
+            if (critIds.has(crit.id)) {
+              return { valid: false, reason: `Duplicate rubric criteria id found: ${crit.id}` };
+            }
+            critIds.add(crit.id);
+          }
+        }
+
+        if ('scale' in proposed) {
+          if (!Array.isArray(proposed.scale) || proposed.scale.length === 0) {
+            return { valid: false, reason: 'RUBRIC target requires a non-empty scale array' };
+          }
+          const scaleIds = new Set<string>();
+          for (const sc of proposed.scale) {
+            if (!sc.id || typeof sc.id !== 'string' || sc.id.trim() === '') {
+              return { valid: false, reason: 'Rubric scale level must contain a valid non-empty id' };
+            }
+            if (!sc.label || typeof sc.label !== 'string' || sc.label.trim() === '') {
+              return { valid: false, reason: 'Rubric scale level must contain a valid non-empty label' };
+            }
+            if (typeof sc.order !== 'number') {
+              return { valid: false, reason: 'Rubric scale level order must be a valid number' };
+            }
+            if (sc.score !== undefined && typeof sc.score !== 'number') {
+              return { valid: false, reason: 'Rubric scale level score must be a number' };
+            }
+            if (scaleIds.has(sc.id)) {
+              return { valid: false, reason: `Duplicate rubric scale level id found: ${sc.id}` };
+            }
+            scaleIds.add(sc.id);
+          }
+        }
+        break;
+      }
+
+      case 'TASK': {
+        const type = contract.immutableContext.instrumentType;
+        if (!type || !['PERFORMANCE', 'ASSIGNMENT', 'PROJECT', 'PRODUCT'].includes(type)) {
+          return {
+            valid: false,
+            reason: `TASK regeneration is not supported for instrument type: ${type}`,
+          };
+        }
+
+        // Check cross-type field pollution
+        const allowedFields = TASK_KEYS_BY_TYPE[type];
+        for (const key of proposedKeys) {
+          if (!allowedFields.includes(key)) {
+            return {
+              valid: false,
+              reason: `Field '${key}' is invalid for instrument type '${type}' task regeneration`,
+            };
+          }
+        }
+
+        // Type-specific field contents validations
+        if (type === 'PERFORMANCE') {
+          if (typeof proposed.task !== 'string' || proposed.task.trim() === '') {
+            return { valid: false, reason: 'PERFORMANCE task must be a non-empty string' };
+          }
+        } else if (type === 'ASSIGNMENT') {
+          if (typeof proposed.instructions !== 'string' || proposed.instructions.trim() === '') {
+            return { valid: false, reason: 'ASSIGNMENT instructions must be a non-empty string' };
+          }
+        } else if (type === 'PROJECT') {
+          if (typeof proposed.projectBrief !== 'string' || proposed.projectBrief.trim() === '') {
+            return { valid: false, reason: 'PROJECT projectBrief must be a non-empty string' };
+          }
+        } else if (type === 'PRODUCT') {
+          if (typeof proposed.productBrief !== 'string' || proposed.productBrief.trim() === '') {
+            return { valid: false, reason: 'PRODUCT productBrief must be a non-empty string' };
+          }
         }
         break;
       }
 
       case 'EVIDENCE_REQUIREMENT': {
-        if (!Array.isArray(proposed.evidenceRequirements)) {
-          return { valid: false, reason: 'EVIDENCE_REQUIREMENT target requires an evidenceRequirements array' };
+        if (!Array.isArray(proposed.evidenceRequirements) || proposed.evidenceRequirements.length === 0) {
+          return {
+            valid: false,
+            reason: 'EVIDENCE_REQUIREMENT target requires a non-empty evidenceRequirements array',
+          };
+        }
+        for (const req of proposed.evidenceRequirements) {
+          if (typeof req !== 'string' || req.trim() === '') {
+            return {
+              valid: false,
+              reason: 'evidenceRequirements must contain only non-empty strings',
+            };
+          }
         }
         break;
       }
 
       case 'OBSERVATION_CONTENT': {
-        if (!Array.isArray(proposed.aspects)) {
-          return { valid: false, reason: 'OBSERVATION_CONTENT target requires aspects array' };
+        if (!Array.isArray(proposed.aspects) || proposed.aspects.length === 0) {
+          return {
+            valid: false,
+            reason: 'OBSERVATION_CONTENT target requires a non-empty aspects array',
+          };
+        }
+        const aspectIds = new Set<string>();
+        for (const asp of proposed.aspects) {
+          if (!asp.id || typeof asp.id !== 'string' || asp.id.trim() === '') {
+            return { valid: false, reason: 'Observation aspect must contain a non-empty id' };
+          }
+          if (!asp.label || typeof asp.label !== 'string' || asp.label.trim() === '') {
+            return { valid: false, reason: 'Observation aspect must contain a non-empty label' };
+          }
+          if (aspectIds.has(asp.id)) {
+            return { valid: false, reason: `Duplicate aspect id found: ${asp.id}` };
+          }
+          aspectIds.add(asp.id);
+        }
+        if ('recordingScheme' in proposed && typeof proposed.recordingScheme !== 'string') {
+          return { valid: false, reason: 'Observation recordingScheme must be a string' };
+        }
+        break;
+      }
+
+      case 'COVERAGE_UNIT': {
+        const hasField = 'assessmentIndicator' in proposed || 'materialOrContext' in proposed;
+        if (!hasField) {
+          return {
+            valid: false,
+            reason: 'COVERAGE_UNIT must provide assessmentIndicator or materialOrContext',
+          };
+        }
+        if (
+          'assessmentIndicator' in proposed &&
+          (typeof proposed.assessmentIndicator !== 'string' || proposed.assessmentIndicator.trim() === '')
+        ) {
+          return { valid: false, reason: 'COVERAGE_UNIT assessmentIndicator must be a non-empty string' };
+        }
+        if (
+          'materialOrContext' in proposed &&
+          (typeof proposed.materialOrContext !== 'string' || proposed.materialOrContext.trim() === '')
+        ) {
+          return { valid: false, reason: 'COVERAGE_UNIT materialOrContext must be a non-empty string' };
         }
         break;
       }
 
       default:
-        break;
+        return { valid: false, reason: `Unsupported target validation: ${target}` };
     }
 
     return {
@@ -473,7 +881,10 @@ export class AssessmentRegenerationService {
   /**
    * Applies the validated draft changes to the cloned package.
    */
-  private applyDraftChanges(pkg: AssessmentPackage, draft: AssessmentRegenerationDraft): { success: boolean; reason?: string } {
+  private applyDraftChanges(
+    pkg: AssessmentPackage,
+    draft: AssessmentRegenerationDraft
+  ): { success: boolean; reason?: string } {
     const proposed = draft.proposedChanges;
 
     switch (draft.target) {
@@ -481,7 +892,11 @@ export class AssessmentRegenerationService {
         const bp: any = (pkg.blueprintItems || []).find((b) => b.id === draft.targetId);
         if (bp) {
           bp.assessmentIndicator = proposed.assessmentIndicator;
-          bp.provenance = 'AI_REGENERATED';
+          bp.provenance = this.updateFieldProvenance(
+            bp.provenance,
+            'assessmentIndicator',
+            'AI_REGENERATED'
+          );
           return { success: true };
         }
         break;
@@ -491,7 +906,11 @@ export class AssessmentRegenerationService {
         const bp: any = (pkg.blueprintItems || []).find((b) => b.id === draft.targetId);
         if (bp) {
           bp.materialOrContext = proposed.materialOrContext;
-          bp.provenance = 'AI_REGENERATED';
+          bp.provenance = this.updateFieldProvenance(
+            bp.provenance,
+            'materialOrContext',
+            'AI_REGENERATED'
+          );
           return { success: true };
         }
         break;
@@ -506,27 +925,23 @@ export class AssessmentRegenerationService {
             if (item) {
               if (draft.target === 'ITEM_PROMPT') {
                 item.prompt = proposed.prompt;
+                item.provenance = this.updateFieldProvenance(item.provenance, 'prompt', 'AI_REGENERATED');
               } else if (draft.target === 'STIMULUS') {
                 item.stimulus = proposed.stimulus;
                 if (proposed.stimulusOrigin) item.stimulusOrigin = proposed.stimulusOrigin;
                 if (proposed.stimulusSource) item.stimulusSource = proposed.stimulusSource;
+                item.provenance = this.updateFieldProvenance(
+                  item.provenance,
+                  'stimulus',
+                  'AI_REGENERATED'
+                );
               } else if (draft.target === 'OPTIONS') {
                 item.options = proposed.options;
-              }
-
-              // Update item provenance field-level metadata
-              item.provenance = item.provenance || {};
-              if (typeof item.provenance === 'string') {
-                item.provenance = { originalOwner: item.provenance };
-              }
-              item.provenance.fields = item.provenance.fields || {};
-
-              if (draft.target === 'ITEM_PROMPT') {
-                item.provenance.fields.prompt = 'AI_REGENERATED';
-              } else if (draft.target === 'STIMULUS') {
-                item.provenance.fields.stimulus = 'AI_REGENERATED';
-              } else if (draft.target === 'OPTIONS') {
-                item.provenance.fields.options = 'AI_REGENERATED';
+                item.provenance = this.updateFieldProvenance(
+                  item.provenance,
+                  'options',
+                  'AI_REGENERATED'
+                );
               }
               return { success: true };
             }
@@ -536,81 +951,164 @@ export class AssessmentRegenerationService {
       }
 
       case 'PROPOSED_ANSWER': {
-        const ak: any = (pkg.answerKeys || []).find((a) => a.id === draft.targetId || a.instrumentItemId === draft.targetId);
+        const ak: any = (pkg.answerKeys || []).find(
+          (a) => a.id === draft.targetId || a.instrumentItemId === draft.targetId
+        );
         if (ak) {
           if ('value' in proposed) ak.value = proposed.value;
           if ('optionIds' in proposed) ak.optionIds = proposed.optionIds;
           if ('matchingPairs' in proposed) ak.matchingPairs = proposed.matchingPairs;
           if ('categoryAnswers' in proposed) ak.categoryAnswers = proposed.categoryAnswers;
-          ak.provenance = 'AI_REGENERATED';
+          ak.provenance = this.updateFieldProvenance(ak.provenance, 'answer', 'AI_REGENERATED');
           return { success: true };
         }
         break;
       }
 
       case 'SCORING_GUIDE': {
-        const sg: any = (pkg.scoringGuides || []).find((s) => s.id === draft.targetId || s.instrumentItemId === draft.targetId);
+        const sg: any = (pkg.scoringGuides || []).find(
+          (s) => s.id === draft.targetId || s.instrumentItemId === draft.targetId
+        );
         if (sg) {
-          if ('title' in proposed) sg.title = proposed.title;
-          if ('guideType' in proposed) sg.guideType = proposed.guideType;
-          if ('instructions' in proposed) sg.instructions = proposed.instructions;
-          if ('maxScore' in proposed) sg.maxScore = proposed.maxScore;
-          sg.provenance = 'AI_REGENERATED';
+          if ('title' in proposed) {
+            sg.title = proposed.title;
+            sg.provenance = this.updateFieldProvenance(sg.provenance, 'title', 'AI_REGENERATED');
+          }
+          if ('guideType' in proposed) {
+            sg.guideType = proposed.guideType;
+            sg.provenance = this.updateFieldProvenance(sg.provenance, 'guideType', 'AI_REGENERATED');
+          }
+          if ('instructions' in proposed) {
+            sg.instructions = proposed.instructions;
+            sg.provenance = this.updateFieldProvenance(sg.provenance, 'instructions', 'AI_REGENERATED');
+          }
+          if ('maxScore' in proposed) {
+            sg.maxScore = proposed.maxScore;
+            sg.provenance = this.updateFieldProvenance(sg.provenance, 'maxScore', 'AI_REGENERATED');
+          }
           return { success: true };
         }
         break;
       }
 
       case 'RUBRIC': {
-        const rb: any = (pkg.rubrics || []).find((r) => r.id === draft.targetId || r.instrumentItemId === draft.targetId);
+        const rb: any = (pkg.rubrics || []).find(
+          (r) => r.id === draft.targetId || r.instrumentItemId === draft.targetId
+        );
         if (rb) {
-          rb.title = proposed.title || rb.title;
-          rb.criteria = proposed.criteria;
-          rb.scale = proposed.scale;
-          rb.provenance = 'AI_REGENERATED';
+          if ('title' in proposed) {
+            rb.title = proposed.title || rb.title;
+            rb.provenance = this.updateFieldProvenance(rb.provenance, 'title', 'AI_REGENERATED');
+          }
+          if ('criteria' in proposed) {
+            rb.criteria = proposed.criteria;
+            rb.provenance = this.updateFieldProvenance(rb.provenance, 'criteria', 'AI_REGENERATED');
+          }
+          if ('scale' in proposed) {
+            rb.scale = proposed.scale;
+            rb.provenance = this.updateFieldProvenance(rb.provenance, 'scale', 'AI_REGENERATED');
+          }
           return { success: true };
         }
         break;
       }
 
       case 'TASK': {
-        const inst = (pkg.instruments || []).find((i) => i.id === draft.targetId);
+        const inst: any = (pkg.instruments || []).find((i) => i.id === draft.targetId);
         if (inst) {
           if (inst.type === 'PERFORMANCE') {
             inst.task = proposed.task || inst.task;
-            inst.instructions = proposed.instructions || inst.instructions;
+            inst.provenance = this.updateFieldProvenance(inst.provenance, 'task', 'AI_REGENERATED');
+            if (proposed.instructions) {
+              inst.instructions = proposed.instructions || inst.instructions;
+              inst.provenance = this.updateFieldProvenance(
+                inst.provenance,
+                'instructions',
+                'AI_REGENERATED'
+              );
+            }
           } else if (inst.type === 'ASSIGNMENT') {
             inst.instructions = proposed.instructions || inst.instructions;
-            inst.expectedOutput = proposed.expectedOutput || inst.expectedOutput;
+            inst.provenance = this.updateFieldProvenance(
+              inst.provenance,
+              'instructions',
+              'AI_REGENERATED'
+            );
+            if (proposed.expectedOutput) {
+              inst.expectedOutput = proposed.expectedOutput || inst.expectedOutput;
+              inst.provenance = this.updateFieldProvenance(
+                inst.provenance,
+                'expectedOutput',
+                'AI_REGENERATED'
+              );
+            }
           } else if (inst.type === 'PROJECT') {
             inst.projectBrief = proposed.projectBrief || inst.projectBrief;
-            inst.expectedDeliverable = proposed.expectedDeliverable || inst.expectedDeliverable;
+            inst.provenance = this.updateFieldProvenance(
+              inst.provenance,
+              'projectBrief',
+              'AI_REGENERATED'
+            );
+            if (proposed.expectedDeliverable) {
+              inst.expectedDeliverable = proposed.expectedDeliverable || inst.expectedDeliverable;
+              inst.provenance = this.updateFieldProvenance(
+                inst.provenance,
+                'expectedDeliverable',
+                'AI_REGENERATED'
+              );
+            }
           } else if (inst.type === 'PRODUCT') {
             inst.productBrief = proposed.productBrief || inst.productBrief;
-            inst.expectedProduct = proposed.expectedProduct || inst.expectedProduct;
+            inst.provenance = this.updateFieldProvenance(
+              inst.provenance,
+              'productBrief',
+              'AI_REGENERATED'
+            );
+            if (proposed.expectedProduct) {
+              inst.expectedProduct = proposed.expectedProduct || inst.expectedProduct;
+              inst.provenance = this.updateFieldProvenance(
+                inst.provenance,
+                'expectedProduct',
+                'AI_REGENERATED'
+              );
+            }
           }
-          (inst as any).provenance = 'AI_REGENERATED';
           return { success: true };
         }
         break;
       }
 
       case 'EVIDENCE_REQUIREMENT': {
-        const inst = (pkg.instruments || []).find((i) => i.id === draft.targetId && i.type === 'PORTFOLIO');
+        const inst: any = (pkg.instruments || []).find(
+          (i) => i.id === draft.targetId && i.type === 'PORTFOLIO'
+        );
         if (inst) {
           (inst as any).evidenceRequirements = proposed.evidenceRequirements;
-          (inst as any).provenance = 'AI_REGENERATED';
+          inst.provenance = this.updateFieldProvenance(
+            inst.provenance,
+            'evidenceRequirements',
+            'AI_REGENERATED'
+          );
           return { success: true };
         }
         break;
       }
 
       case 'OBSERVATION_CONTENT': {
-        const inst = (pkg.instruments || []).find((i) => i.id === draft.targetId && i.type === 'OBSERVATION');
+        const inst: any = (pkg.instruments || []).find(
+          (i) => i.id === draft.targetId && i.type === 'OBSERVATION'
+        );
         if (inst) {
           (inst as any).aspects = proposed.aspects;
-          if ('recordingScheme' in proposed) (inst as any).recordingScheme = proposed.recordingScheme;
-          (inst as any).provenance = 'AI_REGENERATED';
+          inst.provenance = this.updateFieldProvenance(inst.provenance, 'aspects', 'AI_REGENERATED');
+          if ('recordingScheme' in proposed) {
+            (inst as any).recordingScheme = proposed.recordingScheme;
+            inst.provenance = this.updateFieldProvenance(
+              inst.provenance,
+              'recordingScheme',
+              'AI_REGENERATED'
+            );
+          }
           return { success: true };
         }
         break;
@@ -619,9 +1117,22 @@ export class AssessmentRegenerationService {
       case 'COVERAGE_UNIT': {
         const bp: any = (pkg.blueprintItems || []).find((b) => b.coverageUnitId === draft.targetId);
         if (bp) {
-          if ('assessmentIndicator' in proposed) bp.assessmentIndicator = proposed.assessmentIndicator;
-          if ('materialOrContext' in proposed) bp.materialOrContext = proposed.materialOrContext;
-          bp.provenance = 'AI_REGENERATED';
+          if ('assessmentIndicator' in proposed) {
+            bp.assessmentIndicator = proposed.assessmentIndicator;
+            bp.provenance = this.updateFieldProvenance(
+              bp.provenance,
+              'assessmentIndicator',
+              'AI_REGENERATED'
+            );
+          }
+          if ('materialOrContext' in proposed) {
+            bp.materialOrContext = proposed.materialOrContext;
+            bp.provenance = this.updateFieldProvenance(
+              bp.provenance,
+              'materialOrContext',
+              'AI_REGENERATED'
+            );
+          }
           return { success: true };
         }
         break;

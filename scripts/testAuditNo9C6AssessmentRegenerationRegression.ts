@@ -266,7 +266,7 @@ async function runTests() {
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
     assert(result.status === 'REGENERATED', 'Should succeed');
-    const updatedItem: any = result.regeneratedPackage?.instruments[0].items[0];
+    const updatedItem: any = (result.regeneratedPackage?.instruments[0] as any).items[0];
     assert(updatedItem.options[0].text === 'Regenerated Choice A', 'Options must be updated');
     assert(updatedItem.prompt === 'Apakah fungsi klorofil?', 'Prompt must be unchanged');
   });
@@ -299,7 +299,7 @@ async function runTests() {
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
     assert(result.status === 'REGENERATED', 'Should succeed');
-    const untouchedItem: any = result.regeneratedPackage?.instruments[0].items[0];
+    const untouchedItem: any = (result.regeneratedPackage?.instruments[0] as any).items[0];
     assert(untouchedItem.prompt === 'Apakah fungsi klorofil?', 'Item 1 prompt must be untouched');
   });
 
@@ -327,7 +327,7 @@ async function runTests() {
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
     assert(result.status === 'REGENERATED', 'Should succeed with override');
-    const item: any = result.regeneratedPackage?.instruments[0].items[0];
+    const item: any = (result.regeneratedPackage?.instruments[0] as any).items[0];
     assert(item.prompt === 'Regenerated Prompt', 'Prompt must be updated');
     assert(item.provenance.fields.prompt === 'AI_REGENERATED', 'Provenance marked as AI_REGENERATED');
   });
@@ -343,7 +343,7 @@ async function runTests() {
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
     assert(result.status === 'REGENERATED', 'Should succeed');
-    const item: any = result.regeneratedPackage?.instruments[0].items[0];
+    const item: any = (result.regeneratedPackage?.instruments[0] as any).items[0];
     assert(item.provenance.fields.prompt === 'TEACHER_EDITED', 'Unrelated teacher prompt must remain untouched');
   });
 
@@ -907,7 +907,7 @@ async function runTests() {
       targetId: 'item-2',
     };
     const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
-    const item: any = result.regeneratedPackage?.instruments[0].items[1];
+    const item: any = (result.regeneratedPackage?.instruments[0] as any).items[1];
     assert(item.id === 'item-2', 'Original item ID preserved correctly');
     assert(item.blueprintItemId === 'bp-2', 'Original blueprint reference preserved');
   });
@@ -979,6 +979,614 @@ async function runTests() {
   await test('Existing 9B–9C.5 regression compatibility preserved.', async () => {
     // Evaluated via running the test command of 9C.5 and ensuring zero regressions.
     assert(true, 'Compatibility verified against the existing 9C.5 validation test suite');
+  });
+
+  // Test 51: Blocker 1 - Apply-time revision guard succeeds when revision is unchanged.
+  await test('Blocker 1 - Apply-time revision guard succeeds when revision is unchanged.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+    };
+    let called = false;
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, provider, {
+      getCurrentPackageRevision: async () => {
+        called = true;
+        return 1;
+      }
+    });
+    assert(called, 'getCurrentPackageRevision must be called');
+    assert(result.status === 'REGENERATED', 'Should succeed when revision matches');
+  });
+
+  // Test 52: Blocker 1 - Apply-time revision guard fails when package is mutated (revision changes) during provider run.
+  await test('Blocker 1 - Apply-time revision guard fails when package is mutated during provider run.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, provider, {
+      getCurrentPackageRevision: async () => {
+        return 2; // Simulated concurrent mutation
+      }
+    });
+    assert(result.status === 'STALE_REGENERATION_REQUEST', 'Must return STALE_REGENERATION_REQUEST');
+  });
+
+  // Test 53: Blocker 2 - OPTIONS provider output with extra keys is rejected.
+  await test('Blocker 2 - OPTIONS provider output with extra keys is rejected.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'OPTIONS',
+      targetId: 'item-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'OPTIONS',
+      targetId: 'item-1',
+      proposedChanges: {
+        options: [
+          { id: 'opt-a', text: 'New text A' },
+          { id: 'opt-b', text: 'New text B' }
+        ],
+        prompt: 'malicious prompt change' // extra key!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject due to unexpected key');
+  });
+
+  // Test 54: Blocker 2 - ITEM_PROMPT provider output with extra keys is rejected.
+  await test('Blocker 2 - ITEM_PROMPT provider output with extra keys is rejected.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+      proposedChanges: {
+        prompt: 'New Prompt',
+        options: [{ id: 'opt-c', text: 'New Choice' }] // extra key!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject due to unexpected key');
+  });
+
+  // Test 55: Blocker 2 - Reject provider output containing unchanged canonical field coverageUnitId.
+  await test('Blocker 2 - Reject provider output containing unchanged canonical field coverageUnitId.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'ITEM_PROMPT',
+      targetId: 'item-2',
+      proposedChanges: {
+        prompt: 'New Prompt',
+        coverageUnitId: 'cu-2' // forbidden presence of canonical field!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject due to presence of canonical field');
+  });
+
+  // Test 56: Blocker 2 - Reject provider output containing unchanged canonical field instrumentType.
+  await test('Blocker 2 - Reject provider output containing unchanged canonical field instrumentType.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'INDICATOR',
+      targetId: 'bp-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'INDICATOR',
+      targetId: 'bp-1',
+      proposedChanges: {
+        assessmentIndicator: 'New Indicator',
+        instrumentType: 'WRITTEN_TEST' // forbidden presence!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject due to presence of canonical field');
+  });
+
+  // Test 57: Blocker 3 - PROPOSED_ANSWER validation rejects empty changes.
+  await test('Blocker 3 - PROPOSED_ANSWER validation rejects empty changes.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+      proposedChanges: {} // empty!
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty proposedChanges');
+  });
+
+  // Test 58: Blocker 3 - PROPOSED_ANSWER validation accepts valid value.
+  await test('Blocker 3 - PROPOSED_ANSWER validation accepts valid value.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+    };
+    const goodProvider = new MockRegenerationProvider();
+    goodProvider.response = {
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+      proposedChanges: { value: 'opt-a' }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, goodProvider);
+    assert(result.status === 'REGENERATED', 'Should accept valid value');
+  });
+
+  // Test 59: Blocker 3 - PROPOSED_ANSWER validation rejects malformed optionIds.
+  await test('Blocker 3 - PROPOSED_ANSWER validation rejects malformed optionIds.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+      proposedChanges: { optionIds: [123, ''] } // malformed values!
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject invalid optionIds array elements');
+  });
+
+  // Test 60: Blocker 3 - PROPOSED_ANSWER validation rejects malformed matchingPairs.
+  await test('Blocker 3 - PROPOSED_ANSWER validation rejects malformed matchingPairs.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+      proposedChanges: { matchingPairs: [{ premiseId: 'p-1', responseId: '' }] } // malformed pair!
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty values in matchingPairs');
+  });
+
+  // Test 61: Blocker 3 - SCORING_GUIDE validation rejects invalid guideType.
+  await test('Blocker 3 - SCORING_GUIDE validation rejects invalid guideType.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'SCORING_GUIDE',
+      targetId: 'sg-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'SCORING_GUIDE',
+      targetId: 'sg-1',
+      proposedChanges: { guideType: 'NOT_A_VALID_TYPE' }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject invalid guideType');
+  });
+
+  // Test 62: Blocker 3 - SCORING_GUIDE validation rejects negative maxScore.
+  await test('Blocker 3 - SCORING_GUIDE validation rejects negative maxScore.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'SCORING_GUIDE',
+      targetId: 'sg-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'SCORING_GUIDE',
+      targetId: 'sg-1',
+      proposedChanges: { maxScore: -5 }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject negative maxScore');
+  });
+
+  // Test 63: Blocker 3 - RUBRIC validation rejects duplicate criterion IDs.
+  await test('Blocker 3 - RUBRIC validation rejects duplicate criterion IDs.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      explicitTeacherOverride: true,
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      proposedChanges: {
+        criteria: [
+          { id: 'crit-a', label: 'First' },
+          { id: 'crit-a', label: 'Second' } // duplicate ID!
+        ],
+        scale: [{ id: 'sc-1', label: 'Level 1', order: 1 }]
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject duplicate criterion IDs');
+  });
+
+  // Test 64: Blocker 3 - RUBRIC validation rejects duplicate scale IDs.
+  await test('Blocker 3 - RUBRIC validation rejects duplicate scale IDs.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      explicitTeacherOverride: true,
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      proposedChanges: {
+        criteria: [{ id: 'crit-a', label: 'First' }],
+        scale: [
+          { id: 'sc-1', label: 'Level 1', order: 1 },
+          { id: 'sc-1', label: 'Level 2', order: 2 } // duplicate ID!
+        ]
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject duplicate scale IDs');
+  });
+
+  // Test 65: Blocker 3 - RUBRIC validation rejects empty criterion labels.
+  await test('Blocker 3 - RUBRIC validation rejects empty criterion labels.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      explicitTeacherOverride: true,
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      proposedChanges: {
+        criteria: [{ id: 'crit-a', label: '  ' }], // empty label!
+        scale: [{ id: 'sc-1', label: 'Level 1', order: 1 }]
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty label in criteria');
+  });
+
+  // Test 66: Blocker 3 - TASK validation rejects cross-instrument field pollution.
+  await test('Blocker 3 - TASK validation rejects cross-instrument field pollution.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'TASK',
+      targetId: 'inst-perf-1', // PERFORMANCE type
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'TASK',
+      targetId: 'inst-perf-1',
+      proposedChanges: {
+        task: 'Do task',
+        productBrief: 'This is invalid field for PERFORMANCE' // invalid field!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject field belonging to productBrief inside PERFORMANCE');
+  });
+
+  // Test 67: Blocker 3 - EVIDENCE_REQUIREMENT validation rejects empty string in requirements.
+  await test('Blocker 3 - EVIDENCE_REQUIREMENT validation rejects empty string in requirements.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'EVIDENCE_REQUIREMENT',
+      targetId: 'inst-port-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'EVIDENCE_REQUIREMENT',
+      targetId: 'inst-port-1',
+      proposedChanges: {
+        evidenceRequirements: ['Req 1', ''] // empty!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty evidenceRequirements array elements');
+  });
+
+  // Test 68: Blocker 3 - OBSERVATION_CONTENT validation rejects duplicate aspect IDs.
+  await test('Blocker 3 - OBSERVATION_CONTENT validation rejects duplicate aspect IDs.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'OBSERVATION_CONTENT',
+      targetId: 'inst-obs-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'OBSERVATION_CONTENT',
+      targetId: 'inst-obs-1',
+      proposedChanges: {
+        aspects: [
+          { id: 'asp-1', label: 'Label 1' },
+          { id: 'asp-1', label: 'Label 2' } // duplicate ID!
+        ]
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject duplicate aspect IDs');
+  });
+
+  // Test 69: Blocker 4 - GRADE_LANGUAGE resolution without targetField resolves to null.
+  await test('Blocker 4 - GRADE_LANGUAGE resolution without targetField resolves to null.', async () => {
+    const finding: AssessmentValidationFinding = {
+      id: 'find-1',
+      code: 'GRADE_LANGUAGE_TOO_HIGH',
+      severity: 'WARNING',
+      dimension: 'GRADE_LANGUAGE',
+      message: 'Language too difficult'
+    } as any;
+    const target = assessmentRegenerationEligibilityService.resolveTargetForFinding(finding);
+    assert(target === null, 'Should return null when there is no targetField');
+  });
+
+  // Test 70: Blocker 4 - GRADE_LANGUAGE resolution with explicit targetField "ITEM_PROMPT" resolves correctly.
+  await test('Blocker 4 - GRADE_LANGUAGE resolution with explicit targetField "ITEM_PROMPT" resolves correctly.', async () => {
+    const finding: AssessmentValidationFinding = {
+      id: 'find-1',
+      code: 'GRADE_LANGUAGE_TOO_HIGH',
+      severity: 'WARNING',
+      dimension: 'GRADE_LANGUAGE',
+      message: 'Language too difficult',
+      targetField: 'ITEM_PROMPT'
+    } as any;
+    const target = assessmentRegenerationEligibilityService.resolveTargetForFinding(finding);
+    assert(target === 'ITEM_PROMPT', 'Should resolve to ITEM_PROMPT');
+  });
+
+  // Test 71: Blocker 4 - GRADE_LANGUAGE resolution with explicit targetField "STIMULUS" resolves correctly.
+  await test('Blocker 4 - GRADE_LANGUAGE resolution with explicit targetField "STIMULUS" resolves correctly.', async () => {
+    const finding: AssessmentValidationFinding = {
+      id: 'find-1',
+      code: 'GRADE_LANGUAGE_TOO_HIGH',
+      severity: 'WARNING',
+      dimension: 'GRADE_LANGUAGE',
+      message: 'Language too difficult',
+      targetField: 'STIMULUS'
+    } as any;
+    const target = assessmentRegenerationEligibilityService.resolveTargetForFinding(finding);
+    assert(target === 'STIMULUS', 'Should resolve to STIMULUS');
+  });
+
+  // Test 72: Blocker 5 - Exact dependency invalidation with two blueprint items sharing one written test.
+  await test('Blocker 5 - Exact dependency invalidation with two blueprint items sharing one written test.', async () => {
+    // Both bp-1 (for item-1) and bp-2 (for item-2) share inst-1
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'INDICATOR',
+      targetId: 'bp-1',
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
+    assert(result.status === 'REGENERATED', 'Should succeed');
+
+    const ak1 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-1');
+    const ak2 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-2');
+
+    assert((ak1 as any)?.freshness === 'NEEDS_REVIEW', 'Linked item-1 answer key must be invalidated');
+    assert((ak2 as any)?.freshness !== 'NEEDS_REVIEW' && (ak2 as any)?.freshness !== 'STALE', 'Unlinked item-2 answer key must remain untouched');
+  });
+
+  // Test 73: Blocker 5 - Invalidation at instrument level when no item-level linkage is defined.
+  await test('Blocker 5 - Invalidation at instrument level when no item-level linkage is defined.', async () => {
+    const pkgNoItemLinkage = JSON.parse(JSON.stringify(basePackage));
+    // Clear item-level linkage
+    pkgNoItemLinkage.blueprintItems[0].instrumentItemIds = [];
+    
+    const req: AssessmentRegenerationRequest = {
+      packageId: pkgNoItemLinkage.id,
+      expectedPackageRevision: 1,
+      target: 'INDICATOR',
+      targetId: 'bp-1',
+    };
+    const result = await assessmentRegenerationService.regenerate(pkgNoItemLinkage, req, provider);
+    assert(result.status === 'REGENERATED', 'Should succeed');
+
+    // Because no item linkage existed, fallback to instrument level is expected
+    const ak1 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-1');
+    const ak2 = result.regeneratedPackage?.answerKeys.find((a) => a.instrumentItemId === 'item-2');
+
+    assert((ak1 as any)?.freshness === 'NEEDS_REVIEW', 'item-1 answer key must be invalidated');
+    assert((ak2 as any)?.freshness === 'NEEDS_REVIEW', 'item-2 answer key must be invalidated due to instrument level fallback');
+  });
+
+  // Test 74: Blocker 6 - Regenerating ITEM_PROMPT preserves other teacher-edited fields provenance.
+  await test('Blocker 6 - Regenerating ITEM_PROMPT preserves other teacher-edited fields provenance.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'ITEM_PROMPT',
+      targetId: 'item-1',
+      explicitTeacherOverride: true,
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, provider);
+    assert(result.status === 'REGENERATED', 'Should succeed');
+
+    const item: any = (result.regeneratedPackage?.instruments[0] as any).items[0];
+    assert(item.provenance?.fields?.prompt === 'AI_REGENERATED', 'prompt provenance should be AI_REGENERATED');
+    assert(item.provenance?.fields?.options === 'AI_GENERATED', 'options provenance should be preserved as AI_GENERATED');
+  });
+
+  // Test 75: Blocker 6 - Provenance update preserves originalOwner string and migrates gracefully.
+  await test('Blocker 6 - Provenance update preserves originalOwner string and migrates gracefully.', async () => {
+    const customPkg = JSON.parse(JSON.stringify(basePackage));
+    customPkg.blueprintItems[0].provenance = 'TEACHER_EDITED'; // Flat string provenance
+    
+    const req: AssessmentRegenerationRequest = {
+      packageId: customPkg.id,
+      expectedPackageRevision: 1,
+      target: 'INDICATOR',
+      targetId: 'bp-1',
+      explicitTeacherOverride: true,
+    };
+    const result = await assessmentRegenerationService.regenerate(customPkg, req, provider);
+    assert(result.status === 'REGENERATED', 'Should succeed');
+
+    const bp: any = result.regeneratedPackage?.blueprintItems[0];
+    assert(bp?.provenance.originalOwner === 'TEACHER_EDITED', 'Original flat string owner preserved as originalOwner');
+    assert(bp?.provenance.fields?.assessmentIndicator === 'AI_REGENERATED', 'New field-level provenance updated');
+  });
+
+  // Test 76: Blocker 6 - Regenerating RUBRIC criteria preserves scale provenance.
+  await test('Blocker 6 - Regenerating RUBRIC criteria preserves scale provenance.', async () => {
+    const customPkg = JSON.parse(JSON.stringify(basePackage));
+    customPkg.rubrics[0].provenance = {
+      originalOwner: 'TEACHER',
+      fields: {
+        scale: 'TEACHER_EDITED',
+        criteria: 'AI_GENERATED'
+      }
+    };
+
+    const req: AssessmentRegenerationRequest = {
+      packageId: customPkg.id,
+      expectedPackageRevision: 1,
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      explicitTeacherOverride: true,
+    };
+    const rubProvider = new MockRegenerationProvider();
+    rubProvider.response = {
+      target: 'RUBRIC',
+      targetId: 'rub-1',
+      proposedChanges: {
+        criteria: [{ id: 'rc-1', label: 'Updated criteria' }]
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(customPkg, req, rubProvider);
+    assert(result.status === 'REGENERATED', 'Should succeed');
+
+    const rub: any = result.regeneratedPackage?.rubrics[0];
+    assert(rub?.provenance.fields?.criteria === 'AI_REGENERATED', 'criteria provenance updated to AI_REGENERATED');
+    assert(rub?.provenance.fields?.scale === 'TEACHER_EDITED', 'scale provenance preserved as TEACHER_EDITED');
+  });
+
+  // Test 77: Blocker 3 - COVERAGE_UNIT validation rejects empty string for assessmentIndicator.
+  await test('Blocker 3 - COVERAGE_UNIT validation rejects empty string for assessmentIndicator.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'COVERAGE_UNIT',
+      targetId: 'cu-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'COVERAGE_UNIT',
+      targetId: 'cu-1',
+      proposedChanges: {
+        assessmentIndicator: '' // empty!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty indicator inside COVERAGE_UNIT');
+  });
+
+  // Test 78: Blocker 3 - TASK validation rejects empty task string for PERFORMANCE.
+  await test('Blocker 3 - TASK validation rejects empty task string for PERFORMANCE.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'TASK',
+      targetId: 'inst-perf-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'TASK',
+      targetId: 'inst-perf-1',
+      proposedChanges: {
+        task: '' // empty!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty task string in PERFORMANCE');
+  });
+
+  // Test 79: Blocker 3 - TASK validation rejects empty instructions for ASSIGNMENT.
+  await test('Blocker 3 - TASK validation rejects empty instructions for ASSIGNMENT.', async () => {
+    const customPkg = JSON.parse(JSON.stringify(basePackage));
+    // Add ASSIGNMENT instrument
+    customPkg.instruments.push({
+      id: 'inst-as-1',
+      type: 'ASSIGNMENT',
+      instructions: 'Do assignment',
+    });
+    
+    const req: AssessmentRegenerationRequest = {
+      packageId: customPkg.id,
+      expectedPackageRevision: 1,
+      target: 'TASK',
+      targetId: 'inst-as-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'TASK',
+      targetId: 'inst-as-1',
+      proposedChanges: {
+        instructions: '   ' // empty!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(customPkg, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject empty instructions in ASSIGNMENT');
+  });
+
+  // Test 80: Blocker 3 - PROPOSED_ANSWER validation rejects invalid format of categoryAnswers.
+  await test('Blocker 3 - PROPOSED_ANSWER validation rejects invalid format of categoryAnswers.', async () => {
+    const req: AssessmentRegenerationRequest = {
+      packageId: basePackage.id,
+      expectedPackageRevision: 1,
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+    };
+    const badProvider = new MockRegenerationProvider();
+    badProvider.response = {
+      target: 'PROPOSED_ANSWER',
+      targetId: 'ak-1',
+      proposedChanges: {
+        categoryAnswers: [{ statementId: 's-1', categoryId: '' }] // empty categoryId!
+      }
+    };
+    const result = await assessmentRegenerationService.regenerate(basePackage, req, badProvider);
+    assert(result.status === 'FAILED', 'Must reject invalid categoryAnswer entry with empty categoryId');
   });
 
   console.log(`\nAll 9C.6 Granular Regeneration + Invalidation Tests Passed (${passedCount} tests)`);

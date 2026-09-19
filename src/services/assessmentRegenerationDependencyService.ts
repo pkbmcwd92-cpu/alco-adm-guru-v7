@@ -81,8 +81,25 @@ export class AssessmentRegenerationDependencyService {
           if (bp.id === targetId) {
             bp.freshness = 'STALE'; // alignment is stale
 
-            // Invalidate dependent answer keys, scoring guides, and rubrics for its instruments
-            if (bp.instrumentId) {
+            if (bp.instrumentItemIds && bp.instrumentItemIds.length > 0) {
+              const itemIds = bp.instrumentItemIds;
+              cloned.answerKeys.forEach((ak: any) => {
+                if (ak.instrumentItemId && itemIds.includes(ak.instrumentItemId)) {
+                  ak.freshness = 'NEEDS_REVIEW';
+                }
+              });
+              cloned.scoringGuides.forEach((sg: any) => {
+                if (sg.instrumentItemId && itemIds.includes(sg.instrumentItemId)) {
+                  sg.freshness = 'NEEDS_REVIEW';
+                }
+              });
+              cloned.rubrics.forEach((rb: any) => {
+                if (rb.instrumentItemId && itemIds.includes(rb.instrumentItemId)) {
+                  rb.freshness = 'NEEDS_REVIEW';
+                }
+              });
+            } else if (bp.instrumentId) {
+              // Task semantic instruments linked at instrument level
               cloned.answerKeys.forEach((ak: any) => {
                 if (ak.instrumentId === bp.instrumentId) {
                   ak.freshness = 'NEEDS_REVIEW';
